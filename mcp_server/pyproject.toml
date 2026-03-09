@@ -1,0 +1,27 @@
+[tool.poetry]
+name = "omniclaw-mcp-server"
+version = "0.2.0"
+description = "Production MCP Server for the Omniclaw SDK"
+authors = ["OmniClaw Team"]
+readme = "README.md"
+packages = [{ include = "app" }]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.115.0"
+uvicorn = { extras = ["standard"], version = "^0.35.0, >=0.34.0" }
+pydantic = "^2.12.0"
+pydantic-settings = "^2.10.0"
+python-jose = { extras = ["cryptography"], version = "^3.5.0" }
+structlog = "^25.4.0"
+omniclaw = { path = "..", develop = true }
+fastmcp = "==3.0.2"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.4.0"
+pytest-asyncio = "^1.2.0"
+httpx = "^0.28.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
