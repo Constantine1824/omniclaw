@@ -1,8 +1,24 @@
 # OmniClaw
 
-OmniClaw is the AI payments SDK from Omnuron AI. It gives developers one execution surface for wallet creation, guarded spending, direct transfers, x402 payments, cross-chain USDC routing, payment intents, and ERC-8004 trust checks on Circle developer-controlled wallets.
+**The payment infrastructure for autonomous AI agents.**
 
-The SDK is launch-focused: one client, explicit environment configuration, and a safety model built around guards, reservations, locks, and a ledger.
+Programmable wallets. Real-time settlement. Trust-aware execution.
+
+Create agent wallets. Simulate payments. Enforce spending controls. Move USDC safely.
+
+If you are building AI agents that need to pay, charge, subscribe, purchase, or settle onchain, OmniClaw gives you the layer between raw wallet infrastructure and production payment execution.
+
+Instead of wiring wallets, payment routing, guardrails, intents, trust checks, and recovery flows by hand, you get one SDK that handles:
+
+- wallet creation and management
+- guarded `pay()` execution
+- `simulate()` before funds move
+- x402 and direct transfer routing
+- cross-chain USDC flows
+- payment intents with reservation handling
+- ERC-8004-style trust-aware checks
+
+This is the missing execution layer for agent payments.
 
 - Product: `OmniClaw`
 - Company: `Omnuron AI`
@@ -10,6 +26,57 @@ The SDK is launch-focused: one client, explicit environment configuration, and a
 - SDK status: `405` passing SDK tests in `tests/`
 - Python: `>=3.10`
 - Package: `omniclaw`
+
+## Why Developers Try OmniClaw
+
+- Ship agent payments without building your own execution layer from scratch
+- Use one SDK across wallets, simulation, execution, guardrails, and trust-aware payments
+- Give operators controls before an autonomous agent can spend
+- Evaluate identity and trust signals, not just bare wallet addresses
+
+## Why OmniClaw Wins The First Test
+
+- You can understand the product in one minute.
+- You can verify your setup with `omniclaw doctor`.
+- You can create a wallet, simulate a payment, and execute it with one client.
+- You can see immediately that trust, safety, and operator control are core product features, not future ideas.
+
+## Get Running Fast
+
+1. Install the SDK.
+2. Run `omniclaw doctor` to verify credentials and recovery state.
+3. Create an agent wallet.
+4. Run `simulate()` before moving funds.
+5. Execute `pay()` once the route and guardrails look right.
+
+```bash
+pip install omniclaw
+omniclaw doctor
+```
+
+```python
+from omniclaw import Network, OmniClaw
+
+client = OmniClaw(network=Network.ARC_TESTNET)
+
+wallet_set, wallet = await client.create_agent_wallet("research-agent")
+
+simulation = await client.simulate(
+    wallet_id=wallet.id,
+    recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+    amount="2.50",
+)
+
+if simulation.would_succeed:
+    result = await client.pay(
+        wallet_id=wallet.id,
+        recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+        amount="2.50",
+        purpose="agent purchase",
+    )
+```
+
+That is the core OmniClaw workflow: verify setup, create a wallet, simulate the payment, then execute safely.
 
 ## What It Does
 
@@ -20,6 +87,72 @@ The SDK is launch-focused: one client, explicit environment configuration, and a
 - Simulate payments before execution
 - Record transaction history in the built-in ledger
 - Optionally run ERC-8004 trust verification when an RPC URL is configured
+
+## Why Now
+
+The market is moving in pieces:
+
+- Circle is pushing wallet infrastructure and USDC nanopayments for agentic commerce.
+- Coinbase is pushing x402 and agentic wallets.
+- OKX is pushing AI-native onchain operating systems.
+- Privy is pushing wallet infrastructure for apps and agents.
+
+That is good for builders, but it still leaves a real gap: most teams do not need just another wallet API. They need a reliable execution layer that lets agents actually move money safely.
+
+OmniClaw is built for that gap.
+
+## Why Teams Use OmniClaw
+
+- Raw wallet APIs are not enough. Agents need policy, simulation, reservations, idempotency, and failure handling before they are allowed to spend.
+- x402 is powerful, but it is only one rail. Most production products need one SDK that can handle wallet transfers, x402 endpoints, and cross-chain USDC movement together.
+- Payment safety cannot live in ad hoc app code. OmniClaw ships budget guards, rate limits, recipient controls, single-tx limits, confirm thresholds, payment intents, and ledger tracking as first-class primitives.
+- Trust matters when an agent pays another agent. OmniClaw surfaces ERC-8004-style trust evaluation so developers can make decisions with more context than a bare address.
+- Developer adoption matters. The entry point stays simple: initialize `OmniClaw`, create a wallet, run `simulate()`, then call `pay()`.
+
+## Why Trust Matters
+
+Most payment SDKs stop at settlement. Autonomous agents need more.
+
+When one agent pays another, developers increasingly want to know:
+
+- who is receiving this payment
+- whether trust metadata exists for that recipient
+- whether the payment should proceed automatically or be held
+- whether the operator can enforce a policy around risky recipients
+
+OmniClaw makes that visible through ERC-8004-style trust evaluation and integrates it directly into the payment workflow.
+
+## What Makes OmniClaw Different
+
+- Use Circle for wallet custody and transaction infrastructure.
+- Use x402 where pay-per-request HTTP payments make sense.
+- Use OmniClaw to orchestrate execution safely across those systems.
+
+That means fewer one-off payment scripts, less duplicated safety code, and a faster path from demo agent to production agent.
+
+OmniClaw is not trying to replace the wallet or settlement providers already entering this market. It is the layer that makes them usable for autonomous execution.
+
+## Proof Points
+
+- `pay()` routes across direct transfers, x402-style URLs, and cross-chain USDC flows.
+- `simulate()` lets agents and operators know whether a payment would succeed before funds move.
+- Payment intents provide authorize/confirm/cancel flows with reservation handling.
+- Built-in guards give operators programmable spending controls.
+- `omniclaw doctor` gives developers and operators one command to verify credential, recovery, and setup state.
+- ERC-8004 support makes trust and identity part of the product story, not an afterthought.
+
+## Trust-Aware By Design
+
+Autonomous payments need more than successful settlement. They need better answers to questions like:
+
+- who is this agent?
+- what trust signals exist for it?
+- should this payment proceed automatically?
+- when should a payment be held, confirmed, or blocked?
+
+OmniClaw integrates ERC-8004-style trust evaluation into the SDK so developers can add trust-aware payment logic without building a separate reputation and validation layer first.
+
+For teams building agent-to-agent markets, autonomous service providers, or machine-to-machine commerce, that matters.
 
 ## Install
 
@@ -140,6 +273,15 @@ result = await client.pay(
     purpose="model usage",
 )
 ```
+
+## Operator UX
+
+OmniClaw is not only a payment SDK. It also tries to reduce setup and recovery friction for developers and operators.
+
+- `omniclaw doctor` checks whether your machine is ready
+- managed credentials are stored in `~/.config/omniclaw/`
+- Circle recovery files are surfaced as part of the doctor output
+- `omniclaw doctor --json` supports support tooling and automation
 
 ## Core Flows
 
