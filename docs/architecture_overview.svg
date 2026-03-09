@@ -1,0 +1,115 @@
+<svg width="1400" height="860" viewBox="0 0 1400 860" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1400" y2="860" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#081225"/>
+      <stop offset="1" stop-color="#101C39"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#13264A"/>
+      <stop offset="1" stop-color="#0D1832"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#5BB6FF"/>
+      <stop offset="1" stop-color="#8A7CFF"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="10" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <style>
+      .title { font: 700 40px 'Arial', sans-serif; fill: #F3F7FF; }
+      .subtitle { font: 400 18px 'Arial', sans-serif; fill: #B9C7E6; }
+      .section { font: 700 24px 'Arial', sans-serif; fill: #F3F7FF; }
+      .label { font: 700 18px 'Arial', sans-serif; fill: #F3F7FF; }
+      .body { font: 400 16px 'Arial', sans-serif; fill: #B9C7E6; }
+      .small { font: 600 14px 'Arial', sans-serif; fill: #8FD0FF; letter-spacing: 1px; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L10 5L0 10Z" fill="#79C8FF"/>
+    </marker>
+    <marker id="arrowSoft" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0 0L10 5L0 10Z" fill="#8A7CFF"/>
+    </marker>
+  </defs>
+
+  <rect width="1400" height="860" rx="30" fill="url(#bg)"/>
+
+  <text x="72" y="84" class="title">OmniClaw SDK Architecture</text>
+  <text x="72" y="118" class="subtitle">A production execution layer for AI-native payments across wallets, rails, trust, and operator control.</text>
+
+  <rect x="62" y="170" width="240" height="152" rx="22" fill="url(#panel)" stroke="#79C8FF" stroke-width="2"/>
+  <text x="86" y="212" class="small">APPLICATION LAYER</text>
+  <text x="86" y="246" class="section">AI Agents and Apps</text>
+  <text x="86" y="276" class="body">Agents, copilots, autonomous services,</text>
+  <text x="86" y="300" class="body">marketplaces, and AI-powered products</text>
+
+  <rect x="360" y="146" width="494" height="602" rx="28" fill="url(#panel)" stroke="url(#accent)" stroke-width="2.5"/>
+  <text x="392" y="192" class="small">OMNICLAW SDK</text>
+  <text x="392" y="228" class="title" style="font-size:32px;">Execution Layer</text>
+
+  <rect x="392" y="266" width="430" height="84" rx="18" fill="#12284C" stroke="#5BB6FF" stroke-width="1.5"/>
+  <text x="418" y="300" class="label">OmniClaw Client</text>
+  <text x="418" y="326" class="body">One entry point for wallet creation, simulate, pay, intents, ledger, and trust-aware flows.</text>
+
+  <rect x="392" y="376" width="202" height="132" rx="18" fill="#112343" stroke="#79C8FF" stroke-width="1.5"/>
+  <text x="416" y="410" class="label">Safety + Policy</text>
+  <text x="416" y="438" class="body">Budget guards</text>
+  <text x="416" y="462" class="body">Rate limits</text>
+  <text x="416" y="486" class="body">Recipient controls</text>
+
+  <rect x="620" y="376" width="202" height="132" rx="18" fill="#112343" stroke="#79C8FF" stroke-width="1.5"/>
+  <text x="644" y="410" class="label">Execution Control</text>
+  <text x="644" y="438" class="body">Simulation</text>
+  <text x="644" y="462" class="body">Payment intents</text>
+  <text x="644" y="486" class="body">Reservations + locks</text>
+
+  <rect x="392" y="534" width="202" height="132" rx="18" fill="#112343" stroke="#8A7CFF" stroke-width="1.5"/>
+  <text x="416" y="568" class="label">Trust Layer</text>
+  <text x="416" y="596" class="body">ERC-8004 checks</text>
+  <text x="416" y="620" class="body">Identity + reputation</text>
+  <text x="416" y="644" class="body">Hold / block / allow</text>
+
+  <rect x="620" y="534" width="202" height="132" rx="18" fill="#112343" stroke="#8A7CFF" stroke-width="1.5"/>
+  <text x="644" y="568" class="label">Visibility + Ops</text>
+  <text x="644" y="596" class="body">Ledger</text>
+  <text x="644" y="620" class="body">Doctor + recovery</text>
+  <text x="644" y="644" class="body">Redis-backed state</text>
+
+  <rect x="922" y="146" width="416" height="250" rx="24" fill="url(#panel)" stroke="#79C8FF" stroke-width="2"/>
+  <text x="950" y="190" class="small">PAYMENT RAILS</text>
+  <text x="950" y="226" class="section">Execution Targets</text>
+  <rect x="950" y="254" width="164" height="112" rx="18" fill="#112343" stroke="#5BB6FF" stroke-width="1.5"/>
+  <text x="974" y="292" class="label">Direct Transfer</text>
+  <text x="974" y="320" class="body">Wallet-to-wallet</text>
+  <text x="974" y="344" class="body">USDC settlement</text>
+  <rect x="1142" y="254" width="164" height="112" rx="18" fill="#112343" stroke="#5BB6FF" stroke-width="1.5"/>
+  <text x="1168" y="292" class="label">x402</text>
+  <text x="1168" y="320" class="body">HTTP paywalls</text>
+  <text x="1168" y="344" class="body">API monetization</text>
+
+  <rect x="922" y="430" width="416" height="268" rx="24" fill="url(#panel)" stroke="#8A7CFF" stroke-width="2"/>
+  <text x="950" y="474" class="small">INFRASTRUCTURE + PROVIDERS</text>
+  <text x="950" y="510" class="section">Wallet and Trust Stack</text>
+  <rect x="950" y="538" width="164" height="126" rx="18" fill="#112343" stroke="#8A7CFF" stroke-width="1.5"/>
+  <text x="976" y="576" class="label">Circle</text>
+  <text x="976" y="604" class="body">Wallet sets</text>
+  <text x="976" y="628" class="body">Wallets + tx signing</text>
+  <rect x="1142" y="538" width="164" height="126" rx="18" fill="#112343" stroke="#8A7CFF" stroke-width="1.5"/>
+  <text x="1168" y="576" class="label">Redis + RPC</text>
+  <text x="1168" y="604" class="body">Locks + reservations</text>
+  <text x="1168" y="628" class="body">Trust data access</text>
+
+  <path d="M302 246H340L340 308H392" stroke="#79C8FF" stroke-width="5" marker-end="url(#arrow)" filter="url(#glow)"/>
+  <path d="M854 308H902L902 310H950" stroke="#79C8FF" stroke-width="5" marker-end="url(#arrow)" filter="url(#glow)"/>
+  <path d="M854 574H902L902 600H950" stroke="#8A7CFF" stroke-width="5" marker-end="url(#arrowSoft)" filter="url(#glow)"/>
+
+  <path d="M594 442H620" stroke="#79C8FF" stroke-width="4"/>
+  <path d="M594 600H620" stroke="#8A7CFF" stroke-width="4"/>
+  <path d="M494 508V534" stroke="#79C8FF" stroke-width="4"/>
+  <path d="M722 508V534" stroke="#79C8FF" stroke-width="4"/>
+
+  <text x="80" y="786" class="body">Core flow: app calls OmniClaw -> simulate / guard / trust -> route across payment rails -> settle through provider infrastructure.</text>
+</svg>
