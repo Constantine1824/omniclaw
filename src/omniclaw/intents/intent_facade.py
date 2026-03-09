@@ -45,6 +45,8 @@ class PaymentIntentFacade:
         purpose: str | None = None,
         expires_in: int | None = None,
         destination_chain: str | None = None,
+        skip_guards: bool = False,
+        check_trust: bool | None = None,
         **kwargs: Any,
     ) -> PaymentIntent:
         """
@@ -63,6 +65,8 @@ class PaymentIntentFacade:
             purpose: Human-readable purpose of the payment
             expires_in: Expiration time in seconds
             destination_chain: Optional destination chain for cross-chain
+            skip_guards: Skip guard checks (dangerous!)
+            check_trust: Enable/disable ERC-8004 Trust Gate check.
             **kwargs: Additional parameters for specific protocols
 
         Returns:
@@ -75,6 +79,8 @@ class PaymentIntentFacade:
             purpose=purpose,
             expires_in=expires_in,
             destination_chain=destination_chain,
+            skip_guards=skip_guards,
+            check_trust=check_trust,
             **kwargs,
         )
 

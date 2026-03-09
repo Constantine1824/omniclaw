@@ -23,12 +23,16 @@ from omniclaw.client import OmniClaw
 from omniclaw.core.config import Config
 from omniclaw.core.exceptions import (
     ConfigurationError,
+    CrosschainError,
     GuardError,
+    IdempotencyError,
     InsufficientBalanceError,
     NetworkError,
     OmniClawError,
     PaymentError,
     ProtocolError,
+    TransactionTimeoutError,
+    ValidationError,
     WalletError,
     X402Error,
 )
@@ -62,12 +66,15 @@ from omniclaw.guards import (
     SingleTxGuard,
 )
 from omniclaw.onboarding import (
+    doctor,
     ensure_setup,
     find_recovery_file,
     generate_entity_secret,
     get_config_dir,
+    print_doctor_status,
     print_setup_status,
     quick_setup,
+    store_managed_credentials,
     verify_setup,
 )
 
@@ -88,11 +95,14 @@ __all__ = [
     # Setup utilities
     "quick_setup",
     "ensure_setup",
+    "doctor",
     "generate_entity_secret",
     "verify_setup",
+    "print_doctor_status",
     "print_setup_status",
     "find_recovery_file",
     "get_config_dir",
+    "store_managed_credentials",
     # Types
     "Network",
     "FeeLevel",

@@ -207,6 +207,11 @@ class TrustGate:
         await self._resolver.close()
         await self._provider.close()
 
+    @property
+    def is_configured(self) -> bool:
+        """Whether on-chain Trust Gate reads are actually configured."""
+        return self._provider.is_configured
+
     # ─── Internal Pipeline ───────────────────────────────────────────
 
     async def _resolve_with_cache(

@@ -7,6 +7,7 @@ Simple guard that blocks transactions above a maximum amount.
 from __future__ import annotations
 
 from decimal import Decimal
+from omniclaw.events import event_emitter
 
 from omniclaw.guards.base import Guard, GuardResult, PaymentContext
 
@@ -53,6 +54,7 @@ class SingleTxGuard(Guard):
         amount = context.amount
 
         if amount > self._max_amount:
+            event_emitter.emit_background("payment.guard_evaluated", context.wallet_id, payload={"result": "FAIL"})
             return GuardResult(
                 allowed=False,
                 reason=(f"Transaction amount {amount} exceeds maximum {self._max_amount}"),
@@ -74,6 +76,7 @@ class SingleTxGuard(Guard):
                 },
             )
 
+        event_emitter.emit_background("payment.guard_evaluated", context.wallet_id, payload={"result": "PASS"})
         return GuardResult(
             allowed=True,
             guard_name=self.name,

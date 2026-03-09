@@ -1,33 +1,36 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-# omniclaw release build script
+set -euo pipefail
 
-echo "🚀 Building OmniClaw for release..."
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
 
-# 1. Clean previous builds
-echo "🧹 Cleaning up previous builds..."
-rm -rf dist/ build/ *.egg-info/ src/*.egg-info/
+echo "Building OmniClaw release artifacts..."
 
-# 2. Build the package
-echo "📦 Building distribution packages..."
-# Using uv if available, or hatch directly
-if command -v uv &> /dev/null; then
-    uv run hatch build
-else
-    echo "⚠️ 'uv' not found, trying 'hatch' directly..."
-    hatch build
+if ! command -v uv >/dev/null 2>&1; then
+    echo "Error: uv is required to run build.sh"
+    echo "Install it from https://docs.astral.sh/uv/"
+    exit 1
 fi
 
-# 3. Check the distribution
-echo "🔍 Checking distribution artifacts..."
-if command -v uv &> /dev/null; then
-    uv run twine check dist/*
-else
-    twine check dist/*
-fi
+echo "Cleaning previous build artifacts..."
+rm -rf dist build .pytest_cache
+find . -maxdepth 2 -type d \( -name "*.egg-info" -o -name "*.dist-info" \) -prune -exec rm -rf {} +
 
-echo "✅ Build complete!"
-echo ""
-echo "To publish to PyPI:"
-echo "  twine upload dist/*"
-echo ""
+echo "Running release-oriented SDK checks..."
+uv run pytest tests/test_setup.py tests/test_payment_intents.py tests/test_client.py tests/test_webhook_verification.py
+
+echo "Building sdist and wheel..."
+uv run python -m build
+
+echo "Validating package metadata..."
+uv run twine check dist/*
+
+echo
+echo "Build complete."
+echo "Artifacts:"
+ls -1 dist
+echo
+echo "Next:"
+echo "  1. Inspect dist/"
+echo "  2. Upload with: uv run twine upload dist/*"

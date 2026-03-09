@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
+from omniclaw.events import event_emitter
 
 from omniclaw.guards.base import Guard, GuardResult, PaymentContext
 
@@ -64,6 +65,7 @@ class ConfirmGuard(Guard):
     async def check(self, context: PaymentContext) -> GuardResult:
         """Check if payment is confirmed."""
         if not self._needs_confirmation(context.amount):
+            event_emitter.emit_background("payment.guard_evaluated", context.wallet_id, {"result": "PASS"})
             return GuardResult(
                 allowed=True,
                 guard_name=self.name,
@@ -75,12 +77,14 @@ class ConfirmGuard(Guard):
             try:
                 confirmed = await self._callback(context)
                 if confirmed:
+                    event_emitter.emit_background("payment.guard_evaluated", context.wallet_id, {"result": "PASS"})
                     return GuardResult(
                         allowed=True,
                         guard_name=self.name,
                         metadata={"confirmation_required": True, "confirmed": True},
                     )
                 else:
+                    event_emitter.emit_background("payment.guard_evaluated", context.wallet_id, {"result": "FAIL"})
                     return GuardResult(
                         allowed=False,
                         reason="Payment not confirmed by user",
@@ -88,6 +92,7 @@ class ConfirmGuard(Guard):
                         metadata={"confirmation_required": True, "confirmed": False},
                     )
             except Exception as e:
+                event_emitter.emit_background("payment.guard_evaluated", context.wallet_id, {"result": "FAIL"})
                 return GuardResult(
                     allowed=False,
                     reason=f"Confirmation callback failed: {e}",
@@ -96,6 +101,8 @@ class ConfirmGuard(Guard):
                 )
 
         # No callback - block and indicate confirmation needed
+        event_emitter.emit_background("guard.confirm_required", context.wallet_id, {"amount": str(context.amount)})
+        event_emitter.emit_background("payment.guard_evaluated", context.wallet_id, {"result": "FAIL"})
         return GuardResult(
             allowed=False,
             reason=(

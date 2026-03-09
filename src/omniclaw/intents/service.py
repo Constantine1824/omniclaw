@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from omniclaw.events import event_emitter
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -85,6 +86,7 @@ class PaymentIntentService:
         )
 
         await self._save(intent)
+        event_emitter.emit_background("intent.created", wallet_id, {"intent_id": intent.id})
         return intent
 
     async def get(self, intent_id: str) -> PaymentIntent | None:
@@ -129,6 +131,7 @@ class PaymentIntentService:
         if reason:
             intent.cancel_reason = reason
         await self._save(intent)
+        event_emitter.emit_background("intent.canceled", intent.wallet_id, {"intent_id": intent.id})
         return intent
 
     async def _save(self, intent: PaymentIntent) -> None:

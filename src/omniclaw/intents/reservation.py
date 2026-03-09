@@ -38,7 +38,7 @@ class ReservationService:
         """
         self._storage = storage
 
-    async def reserve(self, wallet_id: str, amount: Decimal, intent_id: str) -> str:
+    async def reserve(self, wallet_id: str, amount: Decimal, intent_id: str, expires_at: datetime | None = None) -> str:
         """
         Create a fund reservation.
 
@@ -46,6 +46,7 @@ class ReservationService:
             wallet_id: Wallet ID
             amount: Amount to reserve
             intent_id: Associated payment intent ID
+            expires_at: Optional timestamp threshold for reservation invalidation
 
         Returns:
             Reservation ID (same as intent_id for simplicity)
@@ -56,6 +57,9 @@ class ReservationService:
             "intent_id": intent_id,
             "created_at": datetime.now().isoformat(),
         }
+        if expires_at:
+            data["expires_at"] = expires_at.isoformat()
+
         await self._storage.save(self.COLLECTION, intent_id, data)
         logger.debug(f"Reserved {amount} for wallet {wallet_id} (Intent: {intent_id})")
         return intent_id
@@ -89,7 +93,23 @@ class ReservationService:
         reservations = await self._storage.query(self.COLLECTION, filters=filters)
 
         total = Decimal("0")
+        now = datetime.utcnow()
         for res in reservations:
+            # Replay Sweeping Logic:
+            # If the reservation has an expires_at block and it's breached,
+            # auto-delete it natively to prevent DoS Wallet Locking holes.
+            if "expires_at" in res:
+                try:
+                    expiration_raw = datetime.fromisoformat(res["expires_at"])
+                    expiration = expiration_raw.replace(tzinfo=None) if expiration_raw.tzinfo else expiration_raw
+                    if now > expiration:
+                        logger.info(f"Sweeping mathematically expired reservation: {res.get('intent_id')}")
+                        await self.release(res.get("intent_id", ""))
+                        continue
+                except Exception:
+                    # Ignore ill-formatted edge case logs until later to avoid exceptions on balance counts
+                    pass
+
             amount_str = res.get("amount", "0")
             try:
                 total += Decimal(amount_str)

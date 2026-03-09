@@ -182,21 +182,7 @@ async def test_create_agent_wallet():
     return wallet_set, wallet
 
 
-async def test_create_user_wallet():
-    """Test creating a user wallet (convenience method)."""
-    print("\n" + "=" * 50)
-    print("TEST: Create User Wallet")
-    print("=" * 50)
 
-    wallet_set, wallet = client.wallet.create_user_wallet(user_id="user-12345")
-
-    print("[OK] Created user wallet:")
-    print(f"  Wallet Set ID: {wallet_set.id}")
-    print(f"  Wallet Set Name: {wallet_set.name}")
-    print(f"  Wallet ID: {wallet.id}")
-    print(f"  Wallet Address: {wallet.address}")
-
-    return wallet_set, wallet
 
 
 # ============================================================
@@ -354,7 +340,6 @@ async def run_all_tests():
 
         # 4. Convenience Methods
         await test_create_agent_wallet()
-        await test_create_user_wallet()
 
         print("\n" + "#" * 60)
         print("#  ALL TESTS PASSED")
@@ -447,10 +432,6 @@ async def interactive_mode():
                 wallet_set_id = ws.id
                 wallet_id = w.id
 
-            elif choice == "8":
-                ws, w = await test_create_user_wallet()
-                wallet_set_id = ws.id
-                wallet_id = w.id
 
             elif choice == "9":
                 await run_all_tests()

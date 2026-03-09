@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -15,6 +17,7 @@ from omniclaw.core.types import (
     PaymentMethod,
     PaymentResult,
     PaymentStatus,
+    TransactionState,
 )
 from omniclaw.protocols.base import ProtocolAdapter
 
@@ -82,6 +85,10 @@ class GatewayAdapter(ProtocolAdapter):
         
         destination_address = recipient
 
+        # Normalize network types to Network enums
+        source_network = self._normalize_network(source_network)
+        destination_chain = self._normalize_network(destination_chain)
+
         if source_network == destination_chain:
             try:
                 transfer_result = self._wallet_service.transfer(
@@ -93,18 +100,55 @@ class GatewayAdapter(ProtocolAdapter):
                     idempotency_key=idempotency_key,
                     timeout_seconds=timeout_seconds,
                 )
+                if inspect.isawaitable(transfer_result):
+                    transfer_result = await transfer_result
 
+                # Backward compatibility for tests/mocks that return a raw tx object
+                if not hasattr(transfer_result, "success"):
+                    raw_tx = transfer_result
+                    transfer_result = type("GatewayTransferResult", (), {
+                        "success": True,
+                        "transaction": raw_tx,
+                        "tx_hash": getattr(raw_tx, "tx_hash", None),
+                        "error": None,
+                    })()
+
+                if not transfer_result.success:
+                    return PaymentResult(
+                        success=False,
+                        transaction_id=transfer_result.transaction.id if transfer_result.transaction else None,
+                        blockchain_tx=transfer_result.tx_hash,
+                        amount=amount,
+                        recipient=recipient,
+                        method=self.method,
+                        status=PaymentStatus.FAILED,
+                        error=transfer_result.error or "Same-chain transfer failed",
+                    )
+
+                tx_status = PaymentStatus.PENDING
+                if transfer_result.transaction:
+                    if transfer_result.transaction.state == TransactionState.COMPLETE:
+                        tx_status = PaymentStatus.COMPLETED
+                    elif transfer_result.transaction.state in (
+                        TransactionState.FAILED,
+                        TransactionState.CANCELLED,
+                    ):
+                        tx_status = PaymentStatus.FAILED
+                    elif wait_for_completion:
+                        tx_status = PaymentStatus.PROCESSING
+
+                tx_id = transfer_result.transaction.id if transfer_result.transaction else None
                 return PaymentResult(
                     success=True,
-                    transaction_id=transfer_result.id,
+                    transaction_id=tx_id,
                     blockchain_tx=transfer_result.tx_hash,
                     amount=amount,
                     recipient=recipient,
                     method=self.method,
-                    status=PaymentStatus.PENDING if not wait_for_completion else PaymentStatus.COMPLETED,
+                    status=tx_status,
                     metadata={
-                        "source_network": source_network.value,
-                        "destination_network": destination_chain.value,
+                        "source_network": source_network.value if hasattr(source_network, 'value') else str(source_network),
+                        "destination_network": destination_chain.value if hasattr(destination_chain, 'value') else str(destination_chain),
                         "destination_address": destination_address,
                         "purpose": purpose,
                         "same_chain": True,
@@ -121,8 +165,8 @@ class GatewayAdapter(ProtocolAdapter):
                     status=PaymentStatus.FAILED,
                     error=f"Same-chain transfer failed: {e}",
                     metadata={
-                        "source_network": source_network.value,
-                        "destination_network": destination_chain.value,
+                        "source_network": source_network.value if hasattr(source_network, 'value') else str(source_network),
+                        "destination_network": destination_chain.value if hasattr(destination_chain, 'value') else str(destination_chain),
                         "destination_address": destination_address,
                         "purpose": purpose,
                     },
@@ -293,15 +337,25 @@ class GatewayAdapter(ProtocolAdapter):
                 abi_parameters=[token_messenger, str(amount_units)],
                 fee_level=fee_level,
             )
-            
+
             # Wait for approval confirmation to prevent race condition with burn
             self._logger.info("CCTP V2: Waiting for approval transaction confirmation...")
+            approval_confirmed = False
             for wait_attempt in range(60):  # 2 minutes max
-                time.sleep(2)
+                await asyncio.sleep(2)
                 updated_approve_tx = self._wallet_service._circle.get_transaction(approve_tx.id)
                 
-                if updated_approve_tx.state in ["CONFIRMED", "COMPLETE", "FAILED"]:
-                    if updated_approve_tx.state == "FAILED":
+                if updated_approve_tx.state in (
+                    TransactionState.CONFIRMED,
+                    TransactionState.COMPLETE,
+                    TransactionState.CLEARED,
+                    TransactionState.FAILED,
+                    TransactionState.CANCELLED,
+                ):
+                    if updated_approve_tx.state in (
+                        TransactionState.FAILED,
+                        TransactionState.CANCELLED,
+                    ):
                         self._logger.error("CCTP V2: Approval transaction FAILED on blockchain")
                         return PaymentResult(
                             success=False,
@@ -313,11 +367,24 @@ class GatewayAdapter(ProtocolAdapter):
                             status=PaymentStatus.FAILED,
                             error="USDC Approval failed on blockchain",
                         )
+                    approval_confirmed = True
                     self._logger.info(f"CCTP V2: Approval confirmed: {updated_approve_tx.tx_hash}")
                     break
                     
                 if wait_attempt % 5 == 0:
                     self._logger.debug(f"Waiting for approval... state={updated_approve_tx.state}")
+
+            if not approval_confirmed:
+                return PaymentResult(
+                    success=False,
+                    transaction_id=approve_tx.id,
+                    blockchain_tx=updated_approve_tx.tx_hash,
+                    amount=amount,
+                    recipient=f"{dest_network.value}:{destination_address}",
+                    method=self.method,
+                    status=PaymentStatus.FAILED,
+                    error="USDC approval did not confirm within 2 minutes",
+                )
 
         except Exception as e:
             return PaymentResult(
@@ -356,7 +423,7 @@ class GatewayAdapter(ProtocolAdapter):
             self._logger.info("CCTP V2: Waiting for burn transaction confirmation...")
             burn_tx_hash = None
             for wait_attempt in range(150):  # 150 attempts * 2 seconds = 5 minutes max
-                time.sleep(2)
+                await asyncio.sleep(2)
                 updated_tx = self._wallet_service._circle.get_transaction(burn_tx.id)
                 
                 if updated_tx.tx_hash:
@@ -364,9 +431,15 @@ class GatewayAdapter(ProtocolAdapter):
                     self._logger.info(f"CCTP V2: Burn tx confirmed: {burn_tx_hash}")
                     break
                 
-                if updated_tx.state in ["CONFIRMED", "COMPLETE", "FAILED"]:
+                if updated_tx.state in (
+                    TransactionState.CONFIRMED,
+                    TransactionState.COMPLETE,
+                    TransactionState.CLEARED,
+                    TransactionState.FAILED,
+                    TransactionState.CANCELLED,
+                ):
                     burn_tx_hash = updated_tx.tx_hash
-                    if updated_tx.state == "FAILED":
+                    if updated_tx.state in (TransactionState.FAILED, TransactionState.CANCELLED):
                         self._logger.error("CCTP V2: Burn transaction FAILED on blockchain")
                         return PaymentResult(
                             success=False,
@@ -444,7 +517,7 @@ class GatewayAdapter(ProtocolAdapter):
                 
                 attempt += 1
                 if attempt < max_attempts:
-                    time.sleep(5)
+                    await asyncio.sleep(5)
             
             if not attestation_signature or not attestation_message:
                 self._logger.warning("CCTP V2: Attestation polling timed out")
@@ -636,7 +709,7 @@ class GatewayAdapter(ProtocolAdapter):
             self._logger.info("CCTP V2: Waiting for mint transaction confirmation...")
             mint_tx_hash = None
             for wait_attempt in range(60):
-                time.sleep(2)
+                await asyncio.sleep(2)
                 updated_tx = self._wallet_service._circle.get_transaction(mint_tx.id)
                 
                 if updated_tx.tx_hash:
@@ -660,16 +733,16 @@ class GatewayAdapter(ProtocolAdapter):
                     }
                     
             if mint_tx_hash:
-                 return {
-                    "success": True, 
-                    "tx_id": mint_tx.id, 
+                return {
+                    "success": True,
+                    "tx_id": mint_tx.id,
                     "tx_hash": mint_tx_hash,
                     "executor_wallet": executor_wallet.id,
                     "status": "pending_confirmation"
                 }
-                
+
             return {
-                "success": False, 
+                "success": False,
                 "error": "Mint transaction timed out (no hash generated)",
                 "tx_id": mint_tx.id
             }
@@ -697,6 +770,20 @@ class GatewayAdapter(ProtocolAdapter):
         except Exception as e:
             self._logger.error(f"Failed to find executor wallet: {e}")
             return None
+
+    @staticmethod
+    def _normalize_network(network: Network | str | None) -> Network | str | None:
+        """Normalize a network parameter to a Network enum if possible."""
+        if network is None or isinstance(network, Network):
+            return network
+        try:
+            return Network(network)
+        except (ValueError, KeyError):
+            # Try uppercase variant
+            try:
+                return Network(str(network).upper().replace("-", "_"))
+            except (ValueError, KeyError):
+                return network  # Return as-is if not a known enum value
 
     def get_priority(self) -> int:
         """Gateway adapter has medium priority."""

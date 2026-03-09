@@ -378,7 +378,7 @@ class TestBalanceOperations:
 class TestTransferOperations:
     """Tests for transfer operations."""
 
-    def test_transfer_success(
+    async def test_transfer_success(
         self,
         wallet_service: WalletService,
         mock_circle_client: MagicMock,
@@ -392,7 +392,7 @@ class TestTransferOperations:
             state=TransactionState.INITIATED,
         )
 
-        result = wallet_service.transfer(
+        result = await wallet_service.transfer(
             wallet_id="wallet-123",
             destination_address="0xdest...",
             amount=Decimal("10.00"),
@@ -401,7 +401,7 @@ class TestTransferOperations:
         assert result.success is True
         assert result.transaction is not None
 
-    def test_transfer_fails_without_usdc_token(
+    async def test_transfer_fails_without_usdc_token(
         self,
         wallet_service: WalletService,
         mock_circle_client: MagicMock,
@@ -411,7 +411,7 @@ class TestTransferOperations:
         mock_circle_client.get_usdc_balance.return_value = sample_usdc_balance
         mock_circle_client.find_usdc_token_id.return_value = None
 
-        result = wallet_service.transfer(
+        result = await wallet_service.transfer(
             wallet_id="wallet-123",
             destination_address="0xdest...",
             amount=Decimal("10.00"),
@@ -420,7 +420,7 @@ class TestTransferOperations:
         assert result.success is False
         assert "USDC token ID" in str(result.error)
 
-    def test_transfer_checks_balance(
+    async def test_transfer_checks_balance(
         self,
         wallet_service: WalletService,
         mock_circle_client: MagicMock,
@@ -430,13 +430,13 @@ class TestTransferOperations:
         mock_circle_client.get_usdc_balance.return_value = sample_usdc_balance
 
         with pytest.raises(InsufficientBalanceError):
-            wallet_service.transfer(
+            await wallet_service.transfer(
                 wallet_id="wallet-123",
                 destination_address="0xdest...",
                 amount=Decimal("500.00"),  # More than balance
             )
 
-    def test_transfer_skip_balance_check(
+    async def test_transfer_skip_balance_check(
         self,
         wallet_service: WalletService,
         mock_circle_client: MagicMock,
@@ -448,7 +448,7 @@ class TestTransferOperations:
             state=TransactionState.INITIATED,
         )
 
-        result = wallet_service.transfer(
+        result = await wallet_service.transfer(
             wallet_id="wallet-123",
             destination_address="0xdest...",
             amount=Decimal("500.00"),

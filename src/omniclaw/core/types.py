@@ -155,6 +155,7 @@ class PaymentIntentStatus(str, Enum):
     """Status of a PaymentIntent."""
 
     REQUIRES_CONFIRMATION = "requires_confirmation"  # Created, ready to confirm
+    REQUIRES_REVIEW = "requires_review"  # Created, but TrustGate HELD
     PROCESSING = "processing"  # Executive in progress
     SUCCEEDED = "succeeded"  # Completed successfully
     CANCELED = "canceled"  # Canceled by user/agent

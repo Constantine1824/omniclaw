@@ -105,3 +105,58 @@ def test_no_verification_key():
     payload = "data"
     headers = {}  # No header needed
     assert parser.verify_signature(payload, headers) is True
+
+import json
+from datetime import datetime, timezone, timedelta
+from omniclaw.core.events import NotificationType
+from omniclaw.core.exceptions import ValidationError
+
+def test_handle_valid_payload(parser, key_pair):
+    private_key, _ = key_pair
+    # Valid timestamp (now)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    payload_dict = {
+        "notificationType": "payment_completed",
+        "notificationId": "evt_123",
+        "createDate": now_iso,
+        "notification": {"status": "COMPLETE"}
+    }
+    payload = json.dumps(payload_dict)
+    signature = sign_payload(private_key, payload)
+    headers = {"x-circle-signature": signature}
+    
+    event = parser.handle(payload, headers)
+    assert event.type == NotificationType.PAYMENT_COMPLETED
+    assert event.id == "evt_123"
+
+def test_handle_missing_createdate(parser, key_pair):
+    private_key, _ = key_pair
+    payload_dict = {
+        "notificationType": "payment_completed",
+        "notificationId": "evt_123",
+        # missing createDate
+        "notification": {"status": "COMPLETE"}
+    }
+    payload = json.dumps(payload_dict)
+    signature = sign_payload(private_key, payload)
+    headers = {"x-circle-signature": signature}
+    
+    with pytest.raises(ValidationError, match="Missing 'createDate'"):
+        parser.handle(payload, headers)
+
+def test_handle_replay_attack(parser, key_pair):
+    private_key, _ = key_pair
+    # Timestamp from 10 minutes ago
+    old_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+    payload_dict = {
+        "notificationType": "payment_completed",
+        "notificationId": "evt_123",
+        "createDate": old_time.isoformat(),
+        "notification": {"status": "COMPLETE"}
+    }
+    payload = json.dumps(payload_dict)
+    signature = sign_payload(private_key, payload)
+    headers = {"x-circle-signature": signature}
+    
+    with pytest.raises(InvalidSignatureError, match="temporal drift window"):
+        parser.handle(payload, headers)

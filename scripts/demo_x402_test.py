@@ -113,10 +113,10 @@ async def test_cross_chain(client: OmniClaw):
 
 async def main():
     api_key = os.getenv("CIRCLE_API_KEY")
-    entity_secret = os.getenv("CIRCLE_ENTITY_SECRET")
+    entity_secret = os.getenv("ENTITY_SECRET")
     
     if not api_key or not entity_secret:
-        print("❌ Error: CIRCLE_API_KEY and CIRCLE_ENTITY_SECRET must be set")
+        print("❌ Error: CIRCLE_API_KEY and ENTITY_SECRET must be set")
         return
     
     # Check if wallet IDs are configured

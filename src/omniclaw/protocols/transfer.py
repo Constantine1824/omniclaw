@@ -95,7 +95,7 @@ class TransferAdapter(ProtocolAdapter):
     ) -> PaymentResult:
         """Execute a direct USDC transfer."""
         try:
-            transfer_result = self._wallet_service.transfer(
+            transfer_result = await self._wallet_service.transfer(
                 wallet_id=wallet_id,
                 destination_address=recipient,
                 amount=amount,
@@ -171,7 +171,14 @@ class TransferAdapter(ProtocolAdapter):
             "amount": str(amount),
         }
 
-        if not self.supports(recipient):
+        wallet = self._wallet_service.get_wallet(wallet_id)
+        source_network = Network.from_string(wallet.blockchain)
+
+        if not self.supports(
+            recipient,
+            source_network=source_network,
+            destination_chain=kwargs.get("destination_chain"),
+        ):
             result["would_succeed"] = False
             result["reason"] = f"Invalid address format: {recipient}"
             return result

@@ -116,7 +116,7 @@ class PaymentPayload:
     x402_version: int = 2
     scheme: str = "exact"
     network: str = ""
-    payload: dict = None  # Payment-specific payload
+    payload: dict | None = None  # Payment-specific payload
     resource: str = ""
 
     def to_header(self) -> str:
@@ -352,7 +352,7 @@ class X402Adapter(ProtocolAdapter):
                 transfer_tx_id = gateway_result.transaction_id
             else:
                 # Same chain: Direct transfer
-                transfer_result = self._wallet_service.transfer(
+                transfer_result = await self._wallet_service.transfer(
                     wallet_id=wallet_id,
                     destination_address=payment_address,
                     amount=required_amount,

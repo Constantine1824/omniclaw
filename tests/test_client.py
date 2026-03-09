@@ -5,7 +5,9 @@ Tests the main SDK entry point with per-wallet/wallet-set guards.
 """
 
 import os
+import tempfile
 from decimal import Decimal
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -18,6 +20,7 @@ from omniclaw.core.types import (
 )
 from omniclaw.guards.budget import BudgetGuard
 from omniclaw.guards.single_tx import SingleTxGuard
+from omniclaw.onboarding import store_managed_credentials
 
 
 @pytest.fixture
@@ -60,6 +63,26 @@ class TestClientInitialization:
         client = OmniClaw()
         # No default wallet - must provide wallet_id on each operation
         assert not hasattr(client, "_default_wallet_id") or client._default_wallet_id is None
+
+    def test_init_loads_entity_secret_from_managed_store(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xdg_config_home = Path(tmpdir) / "xdg"
+            with patch.dict(
+                os.environ,
+                {
+                    "CIRCLE_API_KEY": "managed_api_key",
+                    "XDG_CONFIG_HOME": str(xdg_config_home),
+                },
+                clear=True,
+            ):
+                store_managed_credentials(
+                    "managed_api_key",
+                    "managed_secret",
+                    source="test",
+                )
+
+                client = OmniClaw(network=Network.ARC_TESTNET)
+                assert client.config.entity_secret == "managed_secret"
 
 
 class TestGuardManager:

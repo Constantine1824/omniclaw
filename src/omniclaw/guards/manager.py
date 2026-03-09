@@ -52,6 +52,8 @@ class GuardConfig:
     # Recipient guard params
     recipient_mode: str = "whitelist"  # "whitelist" or "blacklist"
     recipient_addresses: list[str] = field(default_factory=list)
+    recipient_patterns: list[str] = field(default_factory=list)
+    recipient_domains: list[str] = field(default_factory=list)
 
     # Rate limit guard params
     max_per_minute: int | None = None
@@ -68,21 +70,23 @@ class GuardConfig:
             "guard_type": self.guard_type.value,
             "name": self.name,
             # Budget
-            "daily_limit": str(self.daily_limit) if self.daily_limit else None,
-            "hourly_limit": str(self.hourly_limit) if self.hourly_limit else None,
-            "total_limit": str(self.total_limit) if self.total_limit else None,
+            "daily_limit": str(self.daily_limit) if self.daily_limit is not None else None,
+            "hourly_limit": str(self.hourly_limit) if self.hourly_limit is not None else None,
+            "total_limit": str(self.total_limit) if self.total_limit is not None else None,
             # Single tx
-            "max_amount": str(self.max_amount) if self.max_amount else None,
-            "min_amount": str(self.min_amount) if self.min_amount else None,
+            "max_amount": str(self.max_amount) if self.max_amount is not None else None,
+            "min_amount": str(self.min_amount) if self.min_amount is not None else None,
             # Recipient
             "recipient_mode": self.recipient_mode,
             "recipient_addresses": self.recipient_addresses,
+            "recipient_patterns": self.recipient_patterns,
+            "recipient_domains": self.recipient_domains,
             # Rate limit
             "max_per_minute": self.max_per_minute,
             "max_per_hour": self.max_per_hour,
             "max_per_day": self.max_per_day,
             # Confirm
-            "confirm_threshold": str(self.confirm_threshold) if self.confirm_threshold else None,
+            "confirm_threshold": str(self.confirm_threshold) if self.confirm_threshold is not None else None,
             "always_confirm": self.always_confirm,
         }
 
@@ -102,6 +106,8 @@ class GuardConfig:
             # Recipient
             recipient_mode=data.get("recipient_mode", "whitelist"),
             recipient_addresses=data.get("recipient_addresses", []),
+            recipient_patterns=data.get("recipient_patterns", []),
+            recipient_domains=data.get("recipient_domains", []),
             # Rate limit
             max_per_minute=data.get("max_per_minute"),
             max_per_hour=data.get("max_per_hour"),
@@ -141,6 +147,10 @@ class GuardConfig:
             config.recipient_mode = guard._mode
         if hasattr(guard, "_addresses"):
             config.recipient_addresses = list(guard._addresses)
+        if hasattr(guard, "_patterns"):
+            config.recipient_patterns = [pattern.pattern for pattern in guard._patterns]
+        if hasattr(guard, "_domains"):
+            config.recipient_domains = list(guard._domains)
 
         # Rate limit guard
         if hasattr(guard, "_max_per_minute"):
@@ -197,6 +207,8 @@ class GuardConfig:
                 name=self.name,
                 mode=self.recipient_mode,
                 addresses=self.recipient_addresses,
+                patterns=self.recipient_patterns,
+                domains=self.recipient_domains,
             )
         elif self.guard_type == GuardType.RATE_LIMIT:
             guard = RateLimitGuard(

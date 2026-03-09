@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from decimal import Decimal
+from omniclaw.events import event_emitter
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -64,6 +65,7 @@ class FundLockService:
             token = await self._storage.acquire_lock(lock_key, ttl)
             if token:
                 logger.debug(f"Acquired lock for wallet {wallet_id} (token: {token[:8]}...)")
+                event_emitter.emit_background("payment.fund_locked", wallet_id, {"token": token})
                 return token
             
             if i < retry_count:
@@ -71,6 +73,7 @@ class FundLockService:
                 await asyncio.sleep(retry_delay)
         
         logger.warning(f"Failed to acquire lock for wallet {wallet_id} after {retry_count} retries")
+        event_emitter.emit_background("system.lock_timeout", wallet_id, severity="error")
         return None
 
     async def release_with_key(self, wallet_id: str, lock_token: str) -> bool:

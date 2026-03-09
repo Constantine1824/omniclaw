@@ -317,36 +317,7 @@ def test_agent_wallet_setup(service: WalletService):
         return None, None
 
 
-def test_user_wallet_setup(service: WalletService):
-    """Test 10: User wallet convenience setup."""
-    print_header("Test 10: User Wallet Setup")
 
-    try:
-        # Test with integer user ID
-        wallet_set1, wallet1 = service.setup_user_wallet(
-            user_id=12345,
-            blockchain=Network.ARC_TESTNET,
-        )
-        print_success(f"User 12345 wallet: {wallet1.id}")
-        print_info(f"Address: {wallet1.address}")
-
-        # Test with string user ID (UUID-like)
-        wallet_set2, wallet2 = service.setup_user_wallet(
-            user_id="user-uuid-abc123",
-            blockchain=Network.ARC_TESTNET,
-        )
-        print_success(f"User uuid wallet: {wallet2.id}")
-        print_info(f"Address: {wallet2.address}")
-
-        # Test cache retrieval
-        cached = service.get_user_wallet(12345)
-        if cached:
-            print_success("Retrieved cached wallet for user 12345")
-
-        return True
-    except Exception as e:
-        print(f"  ✗ User wallet setup failed: {e}")
-        return False
 
 
 def test_get_or_create_default(service: WalletService):
@@ -381,10 +352,7 @@ def test_cache_operations(service: WalletService):
         service.clear_cache()
         print_success("Cache cleared successfully")
 
-        # Verify user wallet cache is cleared
-        cached = service.get_user_wallet(12345)
-        if cached is None:
-            print_success("User wallet cache properly cleared")
+        # Verify user wallet cache is cleared (functionality removed but cache clear still works)
 
         return True
     except Exception as e:
@@ -437,8 +405,6 @@ def main(api_key: str | None = None):
     # Test 9: Agent wallet setup
     test_agent_wallet_setup(service)
 
-    # Test 10: User wallet setup
-    test_user_wallet_setup(service)
 
     # Test 11: Get or create default
     test_get_or_create_default(service)
@@ -448,7 +414,7 @@ def main(api_key: str | None = None):
 
     # Summary
     print_header("Test Summary")
-    print_success("All 12 WalletService tests completed!")
+    print_success("All 11 WalletService tests completed!")
     print()
     print("  Created resources:")
     print(f"    - Wallet Set: {wallet_set.id}")

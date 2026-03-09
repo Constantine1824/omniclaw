@@ -9,6 +9,7 @@ from __future__ import annotations
 import time
 from enum import Enum
 from typing import TYPE_CHECKING, Any
+from omniclaw.events import event_emitter
 
 from omniclaw.core.logging import get_logger
 
@@ -163,6 +164,7 @@ class CircuitBreaker:
         self._logger.critical(
             f"Circuit TRIPPED. Blocking requests for {self.recovery_timeout}s."
         )
+        event_emitter.emit_background("circuit.opened", "system", severity="critical")
 
     async def close(self) -> None:
         """Close the circuit (Recovered)."""
@@ -170,6 +172,7 @@ class CircuitBreaker:
         await self._storage.delete("resilience", self._key_failures)
         await self._storage.delete("resilience", self._key_recovery)
         self._logger.info("Circuit CLOSED. Service restored.")
+        event_emitter.emit_background("circuit.closed", "system", severity="info")
 
     async def __aenter__(self):
         """Context manager entry."""

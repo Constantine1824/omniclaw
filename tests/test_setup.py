@@ -1,5 +1,6 @@
 """Unit tests for setup module."""
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -10,7 +11,11 @@ import pytest
 from omniclaw.onboarding import (
     SetupError,
     create_env_file,
+    doctor,
     generate_entity_secret,
+    load_managed_entity_secret,
+    print_doctor_status,
+    store_managed_credentials,
     verify_setup,
 )
 
@@ -131,3 +136,70 @@ class TestVerifySetup:
 
             assert result["api_key_set"] is True
             assert result["entity_secret_set"] is True
+
+
+class TestManagedCredentials:
+    """Tests for managed config credentials."""
+
+    def test_create_env_file_stores_managed_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            env_path = Path(tmpdir) / ".env"
+            xdg_config_home = Path(tmpdir) / "xdg"
+
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(xdg_config_home)}, clear=False):
+                create_env_file(
+                    api_key="TEST_API_KEY",
+                    entity_secret="a" * 64,
+                    env_path=env_path,
+                )
+
+                assert load_managed_entity_secret("TEST_API_KEY") == "a" * 64
+
+    def test_store_and_load_managed_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xdg_config_home = Path(tmpdir) / "xdg"
+
+            with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(xdg_config_home)}, clear=False):
+                store_managed_credentials(
+                    "TEST_API_KEY",
+                    "b" * 64,
+                    source="test",
+                )
+
+                assert load_managed_entity_secret("TEST_API_KEY") == "b" * 64
+
+    def test_doctor_reports_managed_secret_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xdg_config_home = Path(tmpdir) / "xdg"
+
+            with patch.dict(
+                os.environ,
+                {
+                    "XDG_CONFIG_HOME": str(xdg_config_home),
+                    "CIRCLE_API_KEY": "TEST_API_KEY",
+                },
+                clear=False,
+            ):
+                store_managed_credentials(
+                    "TEST_API_KEY",
+                    "c" * 64,
+                    source="test",
+                )
+                status = doctor()
+
+                assert status["managed_entity_secret_set"] is True
+                assert status["active_entity_secret_source"] == "managed_config"
+
+    def test_print_doctor_status_json(self, capsys) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            xdg_config_home = Path(tmpdir) / "xdg"
+            with patch.dict(
+                os.environ,
+                {"XDG_CONFIG_HOME": str(xdg_config_home), "CIRCLE_API_KEY": "TEST_API_KEY"},
+                clear=False,
+            ):
+                print_doctor_status(as_json=True)
+                output = capsys.readouterr().out
+                data = json.loads(output)
+                assert "ready" in data
+                assert "config_dir" in data

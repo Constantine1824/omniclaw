@@ -32,6 +32,8 @@ def client_mocked():
     )
     # Mock wallet service completely
     client._wallet_service = MagicMock()
+    client._wallet_service.transfer = AsyncMock()
+    client._wallet_service.execute_contract = AsyncMock()
     # Mock balance to prevent checks from failing before transfer
     balance = MagicMock()
     balance.amount = Decimal("1000000.00")

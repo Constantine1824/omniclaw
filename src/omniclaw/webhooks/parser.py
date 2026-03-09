@@ -147,7 +147,27 @@ class WebhookParser:
             except json.JSONDecodeError as e:
                 raise ValidationError(f"Invalid JSON payload: {e}") from e
         else:
+            if self.verification_key:
+                raise InvalidSignatureError(
+                    "Raw webhook payload is required when signature verification is enabled"
+                )
             data = payload
+
+        # Calculate chronological timestamp before Event Mapping to enforce Replay Window
+        # Extract Timestamp from Circle's createDate field. Missing creates validation error.
+        if "createDate" not in data:
+            raise ValidationError("Missing 'createDate' in payload for replay protection")
+            
+        try:
+            timestamp_raw = datetime.fromisoformat(data["createDate"].replace('Z', '+00:00'))
+            timestamp = timestamp_raw.replace(tzinfo=None) if timestamp_raw.tzinfo else timestamp_raw
+        except Exception as e:
+            raise ValidationError(f"Invalid 'createDate' format: {e}") from e
+
+        # 2. Defend Against Replay Attacks (Max 5 Minute Drift allowed)
+        drift = abs((datetime.utcnow() - timestamp).total_seconds())
+        if drift > 300: # 5 Minutes
+            raise InvalidSignatureError(f"Webhook payload exceeds replay attack temporal drift window ({drift:.1f}s > 300s)")
 
         # 2. Map Event
         if "notificationType" not in data:
@@ -171,11 +191,7 @@ class WebhookParser:
         except ValueError:
             event_type = NotificationType.UNKNOWN
 
-        # Extract Timestamp from Circle's customDate field, falling back to current time
-        timestamp = datetime.utcnow()
-        if "customDate" in data:
-            with contextlib.suppress(Exception):
-                timestamp = datetime.fromisoformat(data["customDate"])
+        # (Extracted earlier for replay defense)
 
         return WebhookEvent(
             id=data.get("notificationId", "unknown"),

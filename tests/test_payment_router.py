@@ -33,7 +33,10 @@ def mock_config() -> Config:
 @pytest.fixture
 def mock_wallet_service() -> MagicMock:
     """Create mock wallet service."""
+    from unittest.mock import AsyncMock
     service = MagicMock()
+    service.transfer = AsyncMock()
+    service.execute_contract = AsyncMock()
 
     # Default balance
     service.get_usdc_balance.return_value = Balance(

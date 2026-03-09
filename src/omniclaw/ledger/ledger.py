@@ -177,23 +177,30 @@ class Ledger:
         Returns:
             True if updated, False if not found
         """
-        data = await self._storage.get(self.COLLECTION, entry_id)
-        if not data:
-            return False
+        # Use a coarse lock on the entry ID to prevent Read-Modify-Write race conditions
+        # if multiple async updates hit the ledger for the same transaction simultaneously.
+        lock_token = await self._storage.acquire_lock(f"lock:ledger:{entry_id}", ttl=10)
+        
+        try:
+            data = await self._storage.get(self.COLLECTION, entry_id)
+            if not data:
+                return False
 
-        updates = {"status": status.value}
-        if tx_hash:
-            updates["tx_hash"] = tx_hash
+            updates = {"status": status.value}
+            if tx_hash:
+                updates["tx_hash"] = tx_hash
 
-        if metadata_updates:
-            # Need to get current metadata first to merge?
-            # Merge metadata updates into existing metadata (read-modify-write)
-            current_metadata = data.get("metadata", {})
-            current_metadata.update(metadata_updates)
-            updates["metadata"] = current_metadata
+            if metadata_updates:
+                # Merge metadata updates into existing metadata safely inside the lock
+                current_metadata = data.get("metadata", {})
+                current_metadata.update(metadata_updates)
+                updates["metadata"] = current_metadata
 
-        await self._storage.update(self.COLLECTION, entry_id, updates)
-        return True
+            await self._storage.update(self.COLLECTION, entry_id, updates)
+            return True
+        finally:
+            if lock_token:
+                await self._storage.release_lock(f"lock:ledger:{entry_id}", lock_token)
 
     async def query(
         self,
@@ -234,8 +241,8 @@ class Ledger:
         if status:
             filters["status"] = status.value
 
-        # Fetch with extra buffer for date filtering
-        fetch_limit = limit * 2 if (from_date or to_date) else limit
+        # Fetch without limit if we have date filters, otherwise fetch limit
+        fetch_limit = None if (from_date or to_date) else limit
 
         raw_results = await self._storage.query(self.COLLECTION, filters=filters, limit=fetch_limit)
 

@@ -19,7 +19,7 @@ license = "MIT"
 requires-python = ">=3.10"
 authors = [
     { name = "Abiola Adeshina", email = "abiolaadedayo1993@gmail.com" },
-    { name = "OmniArc Team" }
+    { name = "Omnuron AI Team" }
 ]
 keywords = [
     "ai",
@@ -71,9 +71,14 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/omniclaw/omniclaw"
-Documentation = "https://omniclaw.dev/docs"
-Repository = "https://github.com/omniclaw/omniclaw"
+Homepage = "https://omniclaw.ai"
+Company = "https://omnuron.ai"
+Documentation = "https://omniclaw.ai/docs"
+Repository = "https://github.com/omnuron/omniclaw"
+Issues = "https://github.com/omnuron/omniclaw/issues"
+
+[project.scripts]
+omniclaw = "omniclaw.cli:main"
 
 
 

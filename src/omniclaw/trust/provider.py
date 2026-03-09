@@ -37,6 +37,13 @@ logger = get_logger("trust.provider")
 
 # Environment variable for the RPC endpoint
 RPC_ENV_VAR = "OMNICLAW_RPC_URL"
+_RPC_PLACEHOLDER_MARKERS = (
+    "YOUR_ALCHEMY_KEY",
+    "YOUR_INFURA_KEY",
+    "YOUR_RPC_URL",
+    "CHANGEME",
+    "REPLACE_ME",
+)
 
 
 class ERC8004Provider:
@@ -85,9 +92,15 @@ class ERC8004Provider:
             http_client: Shared httpx client (for connection pooling).
         """
         raw_url = rpc_url or os.environ.get(RPC_ENV_VAR, "")
-        self._rpc_urls: list[str] = [
-            u.strip() for u in raw_url.split(",") if u.strip()
-        ]
+        self._rpc_urls: list[str] = []
+        for candidate in (u.strip() for u in raw_url.split(",") if u.strip()):
+            if any(marker in candidate for marker in _RPC_PLACEHOLDER_MARKERS):
+                logger.warning(
+                    "Ignoring placeholder RPC URL in %s; on-chain lookups will be skipped until a real provider URL is configured.",
+                    RPC_ENV_VAR,
+                )
+                continue
+            self._rpc_urls.append(candidate)
         self._http_client = http_client
         self._owns_client = False
 

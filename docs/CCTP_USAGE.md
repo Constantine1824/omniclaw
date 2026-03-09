@@ -1,120 +1,62 @@
-# Example: Using CCTP Features
+# OmniClaw Cross-Chain Usage
 
-## Basic Cross-Chain Payment
+Use cross-chain routing when you want OmniClaw to send USDC from the source wallet network to a recipient on another supported chain.
+
+## Basic Example
+
 ```python
-from omniclaw import OmniClaw
-from omniclaw.core.types import Network
-from decimal import Decimal
+from omniclaw import OmniClaw, Network
 
-client = OmniClaw(
-    circle_api_key="sk_...",
-    entity_secret="...",
-    network=Network.ARC_TESTNET
-)
+client = OmniClaw(network=Network.ETH_SEPOLIA)
 
-# Simple cross-chain payment (uses Fast Transfer by default)
 result = await client.pay(
     wallet_id="wallet_123",
-    recipient="0x742d35Cc...",
-    amount=Decimal("10.0"),
+    recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+    amount="10.00",
     destination_chain=Network.BASE_SEPOLIA,
 )
 ```
 
-## CCTP Fast Transfer (Default)
-```python
-# Fast Transfer is enabled by default (~2-5 seconds)
-result = await client.pay(
-    wallet_id="wallet_123",
-    recipient="0x742d35Cc...",
-    amount=Decimal("10.0"),
-    destination_chain=Network.BASE_SEPOLIA,
-    use_fast_transfer=True,  # Default, explicit for clarity
-)
+If `destination_chain` is provided, the payment router uses the gateway adapter instead of a same-chain transfer.
 
-# Check result
-if result.success:
-    print(f"Transfer mode: {result.metadata['transfer_mode']}")
-    # Output: "Fast Transfer (~2-5s)"
-```
+## Wait for Completion
 
-## CCTP Standard Transfer
-```python
-# Use Standard Transfer for larger amounts (~13-19 minutes)
-result = await client.pay(
-    wallet_id="wallet_123",
-    recipient="0x742d35Cc...",
-    amount=Decimal("1000.0"),
-    destination_chain=Network.BASE_SEPOLIA,
-    use_fast_transfer=False,  # Opts into Standard Transfer
-)
-
-# Check result
-if result.success:
-    print(f"Transfer mode: {result.metadata['transfer_mode']}")
-    # Output: "Standard Transfer (~13-19m)"
-```
-
-## Checking Transfer Details
 ```python
 result = await client.pay(
     wallet_id="wallet_123",
-    recipient="0x742d35Cc...",
-    amount=Decimal("50.0"),
+    recipient="0xRecipientOnBase",
+    amount="50.00",
     destination_chain=Network.BASE_SEPOLIA,
-    use_fast_transfer=True,  # Fast Transfer
-    purpose="Payment for API access",
     wait_for_completion=True,
+    timeout_seconds=180,
 )
-
-if result.success:
-    print(f"✅ Transaction ID: {result.transaction_id}")
-    print(f"Status: {result.status}")
-    print(f"Method: {result.method}")
-    
-    # CCTP-specific metadata
-    print(f"CCTP Version: {result.metadata['cctp_version']}")
-    print(f"Transfer Mode: {result.metadata['transfer_mode']}")
-    print(f"Source Domain: {result.metadata['source_domain']}")
-    print(f"Dest Domain: {result.metadata['destination_domain']}")
-    
-    # Attestation URL (for manual mint if needed)
-    print(f"Attestation URL: {result.metadata['attestation_url']}")
-    # You can check this URL to get attestation status
-else:
-    print(f"❌ Payment failed: {result.error}")
 ```
 
-## When to Use Each Mode
+## Simulation
 
-### Fast Transfer (use_fast_transfer=True)
-- ✅ **Best for**: Most use cases, real-time payments
-- ⏱️ **Speed**: 2-5 seconds
-- 💰 **Fee**: ~0.0005 USDC max
-- 📦 **Amount**: Any amount
+```python
+sim = await client.simulate(
+    wallet_id="wallet_123",
+    recipient="0xRecipientOnBase",
+    amount="20.00",
+    destination_chain=Network.BASE_SEPOLIA,
+)
+```
 
-### Standard Transfer (use_fast_transfer=False)
-- ✅ **Best for**: Batch processing, non-urgent transfers
-- ⏱️ **Speed**: 13-19 minutes
-- 💰 **Fee**: Lower gas costs
-- 📦 **Amount**: Any amount
+## Operational Notes
 
-## Network Support
+- Cross-chain flows depend on the source and destination networks being supported by the configured gateway/CCTP path.
+- Same-chain transfers should not specify a different `destination_chain`.
+- Use `wait_for_completion=True` only when the caller is prepared to block for provider-side polling.
+- For launch usage, verify network support with Circle’s current chain support before relying on a pair in production.
 
-CCTP works between these networks:
-- Ethereum (ETH, ETH-SEPOLIA)
-- Avalanche (AVAX, AVAX-FUJI)
-- Optimism (OP, OP-SEPOLIA)
-- Arbitrum (ARB, ARB-SEPOLIA)
-- Base (BASE, BASE-SEPOLIA)
-- Polygon (MATIC, MATIC-AMOY)
-- **Arc (ARC-TESTNET)** ⭐ - Uses USDC for gas!
+## Result Metadata
 
-## Complete the Mint (Manual)
+Cross-chain executions may include adapter-specific metadata such as transfer mode, source and destination domains, or attestation-related information. Treat these as informative fields rather than a stable public contract unless your application controls the exact adapter behavior.
 
-After burn transaction completes, you can manually complete the mint:
+## Recommended Workflow
 
-1. Get attestation from the URL in metadata
-2. Call `receiveMessage` on destination chain
-
-Or just wait - Circle will auto-mint after attestation is ready!
+1. simulate the transfer
+2. execute with a caller-supplied `idempotency_key`
+3. inspect `result.status` and `result.metadata`
+4. use the ledger or provider transaction lookup for reconciliation

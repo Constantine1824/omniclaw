@@ -7,6 +7,7 @@ abstracting away Circle API complexity for easy agent integration.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from decimal import Decimal
@@ -70,10 +71,21 @@ class WalletService:
             circle_client: Optional pre-configured Circle client
         """
         self._config = config
-        self._circle = circle_client or CircleClient(config)
+        self.__circle = circle_client
 
         # Cache for wallet lookups
         self._wallet_cache: dict[str, WalletInfo] = {}
+
+    @property
+    def _circle(self) -> CircleClient:
+        """Lazily initialize the Circle client on first real wallet/network use."""
+        if self.__circle is None:
+            self.__circle = CircleClient(self._config)
+        return self.__circle
+
+    @_circle.setter
+    def _circle(self, value: CircleClient | None) -> None:
+        self.__circle = value
 
     # ==================== Wallet Set Operations ====================
 
@@ -227,42 +239,7 @@ class WalletService:
             )
             return wallet_set, wallets
 
-    def create_user_wallet(
-        self,
-        user_id: str,
-        blockchain: Network | str | None = None,
-        count: int = 1,
-    ) -> tuple[WalletSetInfo, WalletInfo | list[WalletInfo]]:
-        """
-        Create wallet(s) for an end user.
 
-        Uses "user-{id}" as wallet set name.
-        If wallet set already exists, reuses it.
-
-        Args:
-            user_id: Unique user identifier
-            blockchain: Blockchain network
-            count: Number of wallets to create
-
-        Returns:
-            Tuple of (wallet_set, wallet_or_list_of_wallets)
-        """
-        target_name = f"user-{user_id}"
-
-        existing_sets = self.list_wallet_sets()
-        wallet_set = next((s for s in existing_sets if s.name == target_name), None)
-
-        if not wallet_set:
-            wallet_set = self.create_wallet_set(name=target_name)
-
-        if count == 1:
-            wallet = self.create_wallet(wallet_set_id=wallet_set.id, blockchain=blockchain)
-            return wallet_set, wallet
-        else:
-            wallets = self.create_wallets(
-                wallet_set_id=wallet_set.id, count=count, blockchain=blockchain
-            )
-            return wallet_set, wallets
 
     def get_wallet(self, wallet_id: str) -> WalletInfo:
         """
@@ -448,7 +425,7 @@ class WalletService:
 
     # ==================== Transfer Operations ====================
 
-    def transfer(
+    async def transfer(
         self,
         wallet_id: str,
         destination_address: str,
@@ -510,7 +487,7 @@ class WalletService:
         # Optionally wait for completion
         if wait_for_completion:
             timeout = timeout_seconds or self._config.transaction_poll_timeout
-            tx = self._wait_for_transaction(tx.id, timeout)
+            tx = await self._wait_for_transaction(tx.id, timeout)
 
         return TransferResult(
             success=tx.is_successful() if tx.is_terminal() else True,
@@ -519,7 +496,7 @@ class WalletService:
             error=tx.error_reason if tx.state == TransactionState.FAILED else None,
         )
 
-    def _wait_for_transaction(
+    async def _wait_for_transaction(
         self,
         transaction_id: str,
         timeout_seconds: float,
@@ -547,7 +524,7 @@ class WalletService:
             if elapsed >= timeout_seconds:
                 return tx
 
-            time.sleep(poll_interval)
+            await asyncio.sleep(poll_interval)
 
     # ==================== Utility Methods ====================
 
@@ -598,62 +575,7 @@ class WalletService:
 
         return wallet_set, wallet
 
-    def setup_user_wallet(
-        self,
-        user_id: str | int,
-        wallet_set_name: str = "User Wallets",
-        blockchain: Network | str | None = None,
-    ) -> tuple[WalletSetInfo, WalletInfo]:
-        """
-        Set up a wallet for an end-user.
 
-        Creates a shared wallet set for users (if not exists) and creates
-        a wallet for the specific user. The user_id is used to identify
-        the wallet internally.
-
-        Args:
-            user_id: User identifier (will be converted to string)
-            wallet_set_name: Name for the shared user wallet set
-            blockchain: Blockchain network
-
-        Returns:
-            Tuple of (wallet_set, wallet)
-
-        Example:
-            >>> # For a database user with ID 12345
-            >>> wallet_set, wallet = service.setup_user_wallet(user_id=12345)
-            >>>
-            >>> # For a UUID user
-            >>> wallet_set, wallet = service.setup_user_wallet(user_id="550e8400-e29b-41d4-a716-446655440000")
-        """
-        # Convert user_id to string
-        user_id_str = str(user_id)
-
-        # Get or create shared wallet set for users
-        wallet_set = self.get_or_create_default_wallet_set(wallet_set_name)
-
-        # Create wallet for this user
-        wallet = self.create_wallet(
-            wallet_set_id=wallet_set.id,
-            blockchain=blockchain,
-        )
-
-        # Cache with user_id as key for easy lookup
-        self._wallet_cache[f"user:{user_id_str}"] = wallet
-
-        return wallet_set, wallet
-
-    def get_user_wallet(self, user_id: str | int) -> WalletInfo | None:
-        """
-        Get a cached user wallet by user_id.
-
-        Args:
-            user_id: User identifier
-
-        Returns:
-            Wallet info if cached, None otherwise
-        """
-        return self._wallet_cache.get(f"user:{str(user_id)}")
 
     def clear_cache(self) -> None:
         """Clear the wallet cache."""

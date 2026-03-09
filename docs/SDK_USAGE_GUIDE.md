@@ -1,331 +1,239 @@
-# OmniClaw SDK - Complete Usage Guide
+# OmniClaw SDK Usage Guide
 
-**OmniClaw** is the payment infrastructure layer for autonomous AI agents. It abstracts blockchain complexity into a unified interface while enforcing strict safety boundaries.
+This guide covers the common SDK workflows without repeating the full architecture or every method signature.
 
-**Key Features:**
-*   **Zero Config**: Just provide your Circle API key. Entity Secret is auto-generated.
-*   **Agent-Native**: Agents call `pay()`. No private key management needed.
-*   **Safety Kernel**: Guards prevent runaway spending with atomic guarantees.
-*   **Unified Routing**: One method handles transfers, x402 invoices, and cross-chain.
-*   **Full Observability**: DEBUG logs expose every internal decision.
-
----
-
-## 🚀 1. Getting Started
-
-### Initialize the Client
+## 1. Initialize the Client
 
 ```python
-import logging
 from omniclaw import OmniClaw, Network
 
-# Just provide your API key - Entity Secret is auto-generated if missing!
-client = OmniClaw(
-    circle_api_key="YOUR_CIRCLE_API_KEY",  # Or set CIRCLE_API_KEY env var
-    network=Network.ARC_TESTNET,            # Recommended: Arc Testnet for hackathon
-    log_level=logging.DEBUG                 # Enable full traceability
-)
-
-# That's it! Ready to use.
+client = OmniClaw(network=Network.ARC_TESTNET)
 ```
 
-### Using Environment Variables (Recommended)
+With environment variables:
+
+```env
+CIRCLE_API_KEY=your_circle_api_key
+ENTITY_SECRET=your_entity_secret
+OMNICLAW_NETWORK=ARC-TESTNET
+```
+
+Optional runtime settings:
+
+```env
+OMNICLAW_STORAGE_BACKEND=redis
+OMNICLAW_REDIS_URL=redis://localhost:6379
+OMNICLAW_LOG_LEVEL=DEBUG
+OMNICLAW_RPC_URL=https://your-rpc-provider
+```
+
+### Entity Secret Recovery
+
+When `ENTITY_SECRET` is missing, the SDK can auto-generate and register one if `CIRCLE_API_KEY` is available.
+
+What gets stored:
+
+- active entity secret: environment or `.env`
+- Circle recovery file: user config directory
+
+Linux recovery-file location:
+
+```text
+~/.config/omniclaw/
+```
+
+This matters because Circle entity secret registration is effectively a one-time setup per account until you recover or reset it.
+
+Run the built-in diagnostic command to check the full state:
 
 ```bash
-# .env file
-CIRCLE_API_KEY=sk_your_api_key_here
-# ENTITY_SECRET is auto-generated if not set!
+omniclaw doctor
 ```
 
+## 2. Create a Wallet
+
+Fastest path:
+
 ```python
-# Client reads from environment automatically
-client = OmniClaw()  # Zero config!
+wallet_set, wallet = await client.create_agent_wallet("agent-007")
 ```
 
-### Async Context Manager
+Manual path:
 
 ```python
-async with OmniClaw() as client:
-    result = await client.pay(...)
-    # Resources cleaned up automatically
+wallet_set = await client.create_wallet_set("ops-wallets")
+wallet = await client.create_wallet(
+    wallet_set_id=wallet_set.id,
+    blockchain=Network.ETH,
+)
 ```
 
----
-
-## 🔧 2. Wallet Management
-
-### Create Agent Wallets
+Common wallet operations:
 
 ```python
-# Create/Retrieve identity for "Agent-007"
-wallet_set, wallet = client.wallet.create_agent_wallet(agent_name="Agent-007")
-
-print(f"Agent ID: {wallet_set.id}")
-print(f"Wallet Address: {wallet.address}")
-```
-
-### Create User Wallets
-
-```python
-wallet_set, wallet = client.wallet.create_user_wallet(user_id="user_12345")
-```
-
-### Other Operations
-
-```python
-# Create wallet set and wallets manually
-ws = await client.create_wallet_set(name="my-agent-swarm")
-w1 = await client.create_wallet(wallet_set_id=ws.id, blockchain=Network.ETH)
-w2 = await client.create_wallet(wallet_set_id=ws.id, blockchain=Network.ARC_TESTNET)
-
-# List & Retrieve
-all_wallets = await client.list_wallets(wallet_set_id=ws.id)
-my_wallet = await client.get_wallet(w1.id)
-
-# Check Balance
+wallets = await client.list_wallets(wallet_set_id=wallet_set.id)
+wallet_info = await client.get_wallet(wallet.id)
 balance = await client.get_balance(wallet.id)
-print(f"Balance: {balance} USDC")
+transactions = await client.list_transactions(wallet_id=wallet.id)
 ```
 
----
-
-## ⚡ 3. The `pay()` Method
-
-### Full Signature
+## 3. Add Safety Guards
 
 ```python
-result = await client.pay(
-    # === REQUIRED ===
-    wallet_id: str,                      # Source wallet ID
-    recipient: str,                      # Address OR URL (for x402)
-    amount: Decimal | int | float | str, # Amount in USDC
-    
-    # === ROUTING ===
-    destination_chain: Network = None,   # Target chain for cross-chain
-    
-    # === GUARDS & CONTEXT ===
-    wallet_set_id: str = None,           # For wallet-set-level guards
-    purpose: str = None,                 # Human-readable purpose (audit)
-    skip_guards: bool = False,           # Bypass guards (DANGEROUS!)
-    
-    # === TRANSACTION CONTROL ===
-    idempotency_key: str = None,         # Prevent duplicate payments
-    fee_level: FeeLevel = MEDIUM,        # LOW, MEDIUM, HIGH gas fees
-    
-    # === CUSTOM DATA ===
-    metadata: dict = None,               # Custom data stored with payment
-    
-    # === SYNCHRONOUS MODE ===
-    wait_for_completion: bool = False,   # Block until confirmed
-    timeout_seconds: float = 30.0,       # Max wait time
-)
-```
-
-### Automatic Routing
-
-| Recipient Format | Protocol | Description |
-| :--- | :--- | :--- |
-| `0x742d...` | **Transfer** | Direct USDC transfer |
-| `https://api.com` | **x402** | Negotiates 402 invoice, pays, retries |
-| Uses `destination_chain` | **Gateway** | Cross-chain via CCTP |
-
-### Examples
-
-**Simple Transfer:**
-```python
-result = await client.pay(
-    wallet_id=wallet.id,
-    recipient="0xVendorAddress...",
-    amount=25.50,
-    purpose="Monthly subscription"
-)
-```
-
-**Cross-Chain Transfer:**
-```python
-result = await client.pay(
-    wallet_id=wallet.id,
-    recipient="0xRecipientOnBase...",
-    amount=10.00,
-    destination_chain=Network.BASE  # Explicit target chain (e.g. cross-chain to Base)
-)
-```
-
-**Synchronous with Metadata:**
-```python
-result = await client.pay(
-    wallet_id=wallet.id,
-    recipient="0xVendor...",
-    amount=100.00,
-    metadata={"invoice_id": "INV-2026-001"},
-    wait_for_completion=True,
-    timeout_seconds=60.0
-)
-
-if result.success:
-    print(f"Confirmed! Tx: {result.blockchain_tx}")
-```
-
----
-
-## 🛡️ 4. Guard System
-
-Guards enforce rules **atomically before any transaction is signed**.
-
-### Budget Guard
-
-```python
-await client.add_budget_guard(
-    wallet.id,
-    daily_limit="100.00",
-    hourly_limit="20.00",
-    total_limit="1000.00",
-    name="budget_limit"
-)
-```
-
-### Rate Limit Guard
-
-```python
-await client.add_rate_limit_guard(
-    wallet.id,
-    max_per_minute=5,
-    max_per_hour=100,
-    name="velocity_check"
-)
-```
-
-### Single Transaction Guard
-
-```python
-await client.add_single_tx_guard(
-    wallet.id,
-    max_amount="50.00",
-    min_amount="0.01"
-)
-```
-
-### Recipient Guard
-
-**Whitelist:**
-```python
+await client.add_budget_guard(wallet.id, daily_limit="100.00", hourly_limit="20.00")
+await client.add_rate_limit_guard(wallet.id, max_per_minute=5)
+await client.add_single_tx_guard(wallet.id, max_amount="25.00")
 await client.add_recipient_guard(
     wallet.id,
     mode="whitelist",
-    addresses=["0xTrusted...", "0xPartner..."],
-    domains=["api.openai.com", "aws.amazon.com"],
-    patterns=[r"^0x[a-fA-F0-9]{40}$"]
+    addresses=["0xTrustedRecipient"],
+    domains=["api.openai.com"],
 )
+await client.add_confirm_guard(wallet.id, threshold="500.00")
 ```
 
-**Blacklist:**
-```python
-await client.add_recipient_guard(
-    wallet.id,
-    mode="blacklist",
-    domains=["malicious-site.com"],
-    patterns=[r".*casino.*"]
-)
-```
-
----
-
-## 🏢 5. Wallet-Set Guards
-
-Apply guards to **ALL wallets** in a set:
+Wallet-set guard helpers apply the same logic across all wallets in a set.
 
 ```python
-await client.add_budget_guard_for_set(wallet_set.id, daily_limit="1000.00")
+await client.add_budget_guard_for_set(wallet_set.id, daily_limit="500.00")
 await client.add_rate_limit_guard_for_set(wallet_set.id, max_per_hour=100)
-await client.add_recipient_guard_for_set(wallet_set.id, mode="whitelist", addresses=[...])
 ```
 
-### List Guards
+## 4. Execute a Payment
 
 ```python
-wallet_guards = await client.list_guards(wallet.id)
-set_guards = await client.list_guards_for_set(wallet_set.id)
+result = await client.pay(
+    wallet_id=wallet.id,
+    recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+    amount="10.50",
+    purpose="vendor payment",
+)
 ```
 
----
+Key runtime arguments:
 
-## 🧠 6. Payment Intents (Authorize → Capture)
+- `wallet_id`: required source wallet
+- `recipient`: blockchain address or URL
+- `amount`: USDC amount
+- `destination_chain`: set for cross-chain flows
+- `purpose`: audit-friendly note
+- `idempotency_key`: caller-controlled dedupe key
+- `skip_guards`: bypass guards, only for special cases
+- `check_trust`: `None`, `True`, or `False`
+- `wait_for_completion`: wait for provider confirmation when supported
 
-For high-value transactions requiring approval:
+## 5. Understand Routing
+
+OmniClaw routes automatically:
+
+- address -> direct transfer
+- URL -> x402
+- address + `destination_chain` -> gateway/cross-chain
+
+Examples:
 
 ```python
-# 1. Create Intent (no funds move)
+await client.pay(wallet_id=wallet.id, recipient="0xRecipient", amount="5.00")
+await client.pay(wallet_id=wallet.id, recipient="https://api.vendor.com/paywall", amount="0.05")
+await client.pay(
+    wallet_id=wallet.id,
+    recipient="0xRecipientOnBase",
+    amount="20.00",
+    destination_chain=Network.BASE,
+)
+```
+
+## 6. Simulate Before Sending
+
+```python
+sim = await client.simulate(
+    wallet_id=wallet.id,
+    recipient="0xRecipient",
+    amount="25.00",
+)
+
+if sim.would_succeed:
+    print(sim.route)
+else:
+    print(sim.reason)
+```
+
+Simulation checks:
+
+- balance after reservations
+- guard outcomes
+- trust outcome when enabled
+- adapter suitability
+
+## 7. Use Payment Intents for Approval Flows
+
+```python
 intent = await client.create_payment_intent(
     wallet_id=wallet.id,
-    recipient="0x...",
-    amount=1000.00,
-    purpose="Large purchase"
+    recipient="0xRecipient",
+    amount="250.00",
+    purpose="high-value purchase",
 )
+```
 
-# 2. After human approval...
+Confirm later:
+
+```python
 result = await client.confirm_payment_intent(intent.id)
-
-# 3. Or cancel
-await client.cancel_payment_intent(intent.id)
 ```
 
----
-
-## 🚀 7. Batch Payments
+Cancel if needed:
 
 ```python
-from omniclaw import PaymentRequest
-
-requests = [
-    PaymentRequest(wallet_id=w1.id, recipient="0xA...", amount=10),
-    PaymentRequest(wallet_id=w1.id, recipient="0xB...", amount=20),
-    PaymentRequest(wallet_id=w2.id, recipient="0xC...", amount=15, destination_chain=Network.ARC_TESTNET),
-]
-
-batch_result = await client.batch_pay(requests, concurrency=5)
-print(f"Success: {batch_result.success_count}/{batch_result.total_count}")
+await client.cancel_payment_intent(intent.id, reason="approval denied")
 ```
 
----
+Use intents when you need:
 
-## 🔍 8. Observability
+- human review
+- delayed execution
+- serialized approval flows
+- explicit reservation of spendable balance
 
-### Logging
+## 8. Enable Trust Checks
+
+Set a real RPC URL:
+
+```env
+OMNICLAW_RPC_URL=https://your-rpc-provider
+```
+
+Then request trust evaluation:
 
 ```python
-client = OmniClaw(log_level=logging.DEBUG)  # See everything
-client = OmniClaw(log_level=logging.INFO)   # High-level flow
-client = OmniClaw(log_level=logging.WARNING) # Only issues
+result = await client.pay(
+    wallet_id=wallet.id,
+    recipient="0xRecipient",
+    amount="10.00",
+    check_trust=True,
+)
 ```
 
-### Ledger
+Rules:
+
+- `check_trust=True` fails if no real RPC URL is configured
+- `check_trust=None` uses auto mode
+- `check_trust=False` skips trust evaluation
+
+## 9. Webhooks
+
+Use the webhook parser when handling Circle events:
 
 ```python
-history = await client.ledger.get_history(wallet.id)
-updated = await client.sync_transaction(entry_id)
+event = client.webhooks.handle(payload, headers)
 ```
 
-### Webhooks
+If signature verification is configured, pass the raw payload and headers so verification can run before parsing.
 
-```python
-@app.post("/webhooks/circle")
-async def handle(request: Request):
-    event = client.webhooks.handle(await request.body(), request.headers)
-    if event.type == NotificationType.PAYMENT_COMPLETED:
-        print(f"Payment confirmed: {event.data.get('id')}")
-    return {"status": "ok"}
-```
+## 10. Operational Guidance
 
----
-
-## 🎯 Best Practices
-
-1. **Always Guard**: Never deploy without a `BudgetGuard`
-2. **Use Intents**: For amounts > $100, use human-in-the-loop
-3. **Enable DEBUG**: See the matrix in development
-4. **Use `destination_chain`**: Be explicit for cross-chain
-5. **Store in `metadata`**: Link to your external systems
-
----
-
-**Go build the Agent Economy!** 🚀
+- Use Redis in any concurrent deployment.
+- Keep `OMNICLAW_NETWORK` explicit in every deployed environment.
+- Keep trust checks opt-in unless your deployment is prepared with a working RPC provider.
+- Prefer `simulate()` for higher-risk or user-approved operations.
+- Prefer payment intents for review-required or delayed-execution flows.

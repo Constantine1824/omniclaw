@@ -38,6 +38,7 @@ class Config:
     enable_rate_limiting: bool = True  # Enable Circle API rate limiting
     max_api_calls_per_second: int = 30  # Conservative limit (Circle allows 35) endpoints
     circle_api_base_url: str = "https://api.circle.com/v1/w3s"
+    rpc_url: str | None = None
 
     # x402 facilitator (thirdweb)
     x402_facilitator_url: str = "https://x402.org/facilitator"
@@ -57,6 +58,15 @@ class Config:
     # Wallet defaults
     default_wallet_id: str | None = None
 
+    # Default Guard Configuration
+    daily_budget: str | None = None
+    hourly_budget: str | None = None
+    tx_limit: str | None = None
+    rate_limit_per_min: int | None = None
+    whitelisted_recipients: list[str] | None = None
+    confirm_always: bool = False
+    confirm_threshold: str | None = None
+
     def __post_init__(self) -> None:
         if not self.circle_api_key:
             raise ValueError("circle_api_key is required")
@@ -66,28 +76,53 @@ class Config:
     @classmethod
     def from_env(cls, **overrides: Any) -> Config:
         """Load configuration from environment variables."""
-        circle_api_key = overrides.get("circle_api_key") or _get_env_var(
+        def override_or_env(name: str, env_name: str, default: Any = None) -> Any:
+            if name in overrides:
+                return overrides[name]
+            return _get_env_var(env_name, default=default)
+
+        circle_api_key = override_or_env("circle_api_key", "CIRCLE_API_KEY") or _get_env_var(
             "CIRCLE_API_KEY", required=True
         )
-        entity_secret = overrides.get("entity_secret") or _get_env_var(
+        entity_secret = override_or_env("entity_secret", "ENTITY_SECRET") or _get_env_var(
             "ENTITY_SECRET", required=True
         )
 
         # Parse network from environment
-        network_str = overrides.get("network") or _get_env_var(
-            "OMNICLAW_NETWORK", default="ARC-TESTNET"
-        )
+        network_str = override_or_env("network", "OMNICLAW_NETWORK", "ARC-TESTNET")
         network = Network.from_string(network_str) if isinstance(network_str, str) else network_str
 
-        default_wallet_id = overrides.get("default_wallet_id") or _get_env_var(
-            "OMNICLAW_DEFAULT_WALLET"
+        default_wallet_id = override_or_env("default_wallet_id", "OMNICLAW_DEFAULT_WALLET")
+
+        log_level = override_or_env("log_level", "OMNICLAW_LOG_LEVEL", "INFO")
+
+        env = override_or_env("env", "OMNICLAW_ENV", "development")
+        rpc_url = override_or_env("rpc_url", "OMNICLAW_RPC_URL")
+
+        # Parse guard limits
+        daily_budget = override_or_env("daily_budget", "OMNICLAW_DAILY_BUDGET")
+        hourly_budget = override_or_env("hourly_budget", "OMNICLAW_HOURLY_BUDGET")
+        tx_limit = override_or_env("tx_limit", "OMNICLAW_TX_LIMIT")
+        rate_limit_env = _get_env_var("OMNICLAW_RATE_LIMIT_PER_MIN")
+        rate_limit_per_min = (
+            overrides["rate_limit_per_min"]
+            if "rate_limit_per_min" in overrides
+            else (int(rate_limit_env) if rate_limit_env else None)
         )
 
-        log_level = overrides.get("log_level") or _get_env_var(
-            "OMNICLAW_LOG_LEVEL", default="INFO"
+        whitelist_env = _get_env_var("OMNICLAW_WHITELISTED_RECIPIENTS")
+        whitelisted_recipients = (
+            overrides["whitelisted_recipients"]
+            if "whitelisted_recipients" in overrides
+            else (whitelist_env.split(",") if whitelist_env else None)
         )
 
-        env = overrides.get("env") or _get_env_var("OMNICLAW_ENV", default="development")
+        confirm_always = (
+            overrides["confirm_always"]
+            if "confirm_always" in overrides
+            else (_get_env_var("OMNICLAW_CONFIRM_ALWAYS", "false").lower() == "true")
+        )
+        confirm_threshold = override_or_env("confirm_threshold", "OMNICLAW_CONFIRM_THRESHOLD")
 
         return cls(
             circle_api_key=circle_api_key,  # type: ignore
@@ -106,6 +141,14 @@ class Config:
             ),
             log_level=log_level,  # type: ignore
             env=env,  # type: ignore
+            rpc_url=rpc_url,
+            daily_budget=daily_budget,
+            hourly_budget=hourly_budget,
+            tx_limit=tx_limit,
+            rate_limit_per_min=rate_limit_per_min,
+            whitelisted_recipients=whitelisted_recipients,
+            confirm_always=confirm_always,
+            confirm_threshold=confirm_threshold,
         )
 
     def with_updates(self, **updates: Any) -> Config:
@@ -123,6 +166,14 @@ class Config:
             "transaction_poll_timeout": self.transaction_poll_timeout,
             "log_level": self.log_level,
             "env": self.env,
+            "rpc_url": self.rpc_url,
+            "daily_budget": self.daily_budget,
+            "hourly_budget": self.hourly_budget,
+            "tx_limit": self.tx_limit,
+            "rate_limit_per_min": self.rate_limit_per_min,
+            "whitelisted_recipients": self.whitelisted_recipients,
+            "confirm_always": self.confirm_always,
+            "confirm_threshold": self.confirm_threshold,
         }
         current.update(updates)
         return Config(**current)

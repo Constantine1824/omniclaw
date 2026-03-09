@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
 from omniclaw.core.circle_client import CircleClient
 from omniclaw.core.config import Config
-from omniclaw.core.exceptions import InsufficientBalanceError, PaymentError, ValidationError
+from omniclaw.core.exceptions import ConfigurationError, InsufficientBalanceError, PaymentError, ValidationError
 from omniclaw.core.types import (
     AccountType,
     AmountType,
@@ -100,6 +100,15 @@ class OmniClaw:
         if not entity_secret:
             entity_secret = os.environ.get("ENTITY_SECRET")
 
+        if circle_api_key and not entity_secret:
+            from omniclaw.onboarding import load_managed_entity_secret
+
+            managed_secret = load_managed_entity_secret(circle_api_key)
+            if managed_secret:
+                entity_secret = managed_secret
+                os.environ.setdefault("ENTITY_SECRET", managed_secret)
+                self._logger.info("Loaded entity secret from managed OmniClaw config.")
+
         # Auto-setup entity secret if missing but API key is present
         if circle_api_key and not entity_secret:
             self._logger.info("Entity secret not found. Running auto-setup...")
@@ -121,15 +130,24 @@ class OmniClaw:
             network=network,
         )
 
+        if circle_api_key and entity_secret:
+            try:
+                from omniclaw.onboarding import store_managed_credentials
+
+                store_managed_credentials(
+                    circle_api_key,
+                    entity_secret,
+                    source="runtime_sync",
+                )
+            except OSError as exc:
+                self._logger.warning(f"Failed to sync managed credentials store: {exc}")
+
         self._storage = get_storage()
         self._ledger = Ledger(self._storage)
         self._fund_lock = FundLockService(self._storage)
         self._guard_manager = GuardManager(self._storage)
-        self._circle_client = CircleClient(self._config)
-
         self._wallet_service = WalletService(
             self._config,
-            self._circle_client,
         )
 
         self._router = PaymentRouter(self._config, self._wallet_service)
@@ -152,7 +170,7 @@ class OmniClaw:
             wallet_service=self._wallet_service,
             network=network,
             default_policy=trust_policy,
-            rpc_url=rpc_url,
+            rpc_url=rpc_url or self._config.rpc_url,
         )
 
         # Initialize Resilience
@@ -247,6 +265,75 @@ class OmniClaw:
             account_type=account_type,
         )
 
+    async def create_agent_wallet(
+        self,
+        agent_name: str,
+        blockchain: Network | str | None = None,
+        apply_default_guards: bool = True,
+    ) -> tuple[WalletSetInfo, WalletInfo]:
+        """
+        Create a wallet for an AI agent, optionally applying default SDK guards.
+        
+        Args:
+            agent_name: Unique agent name (used as wallet set name)
+            blockchain: Blockchain network (defaults to config network)
+            apply_default_guards: Apply configured default guards to wallet
+
+        Returns:
+            Tuple of (wallet_set, wallet_info)
+        """
+        wallet_set, wallet = self._wallet_service.setup_agent_wallet(
+            agent_name=agent_name,
+            blockchain=blockchain,
+        )
+        
+        if apply_default_guards:
+            await self.apply_default_guards(wallet.id)
+            
+        return wallet_set, wallet
+
+    async def apply_default_guards(self, wallet_id: str) -> None:
+        """Apply default guards configured in SDK Config to a wallet."""
+        c = self._config
+        
+        if c.daily_budget or c.hourly_budget:
+            await self.add_budget_guard(
+                wallet_id=wallet_id,
+                daily_limit=c.daily_budget,
+                hourly_limit=c.hourly_budget,
+                name="default_budget"
+            )
+            
+        if c.rate_limit_per_min:
+            await self.add_rate_limit_guard(
+                wallet_id=wallet_id,
+                max_per_minute=c.rate_limit_per_min,
+                name="default_rate_limit"
+            )
+            
+        if c.tx_limit:
+            await self.add_single_tx_guard(
+                wallet_id=wallet_id,
+                max_amount=c.tx_limit,
+                name="default_single_tx"
+            )
+            
+        if c.whitelisted_recipients:
+            await self.add_recipient_guard(
+                wallet_id=wallet_id,
+                mode="whitelist",
+                addresses=c.whitelisted_recipients,
+                name="default_recipient_whitelist"
+            )
+            
+        if c.confirm_always or c.confirm_threshold is not None:
+            await self.add_confirm_guard(
+                wallet_id=wallet_id,
+                always_confirm=c.confirm_always,
+                threshold=c.confirm_threshold,
+                name="default_confirm"
+            )
+
     async def create_wallet_set(self, name: str | None = None) -> WalletSetInfo:
         """Create a new wallet set."""
         return self._wallet_service.create_wallet_set(name)
@@ -262,6 +349,10 @@ class OmniClaw:
     async def get_wallet(self, wallet_id: str) -> WalletInfo:
         """Get details of a specific wallet."""
         return self._wallet_service.get_wallet(wallet_id)
+
+    async def get_wallet_set(self, wallet_set_id: str) -> WalletSetInfo:
+        """Get details of a specific wallet set."""
+        return self._wallet_service.get_wallet_set(wallet_set_id)
 
     async def list_transactions(
         self, wallet_id: str | None = None, blockchain: Network | str | None = None
@@ -332,6 +423,14 @@ class OmniClaw:
         # check_trust=False → skip trust check
         run_trust = check_trust if check_trust is not None else (not skip_guards)
         trust_result: TrustCheckResult | None = None
+        if self._trust_gate and run_trust:
+            if not self._trust_gate.is_configured:
+                if check_trust is True:
+                    raise ConfigurationError(
+                        "Trust Gate requires a real OMNICLAW_RPC_URL. "
+                        "Set OMNICLAW_RPC_URL before using trust verification."
+                    )
+                run_trust = False
         if self._trust_gate and run_trust:
             trust_result = await self._trust_gate.evaluate(
                 recipient_address=recipient,
@@ -588,6 +687,7 @@ class OmniClaw:
         amount: Decimal | str,
         wallet_set_id: str | None = None,
         check_trust: bool | None = None,
+        skip_guards: bool = False,
         **kwargs: Any,
     ) -> SimulationResult:
         """
@@ -607,6 +707,7 @@ class OmniClaw:
             check_trust: Enable/disable ERC-8004 Trust Gate check.
                          None (default) = auto (enabled if trust_gate configured).
                          True = force enable. False = skip trust check.
+            skip_guards: Skip guard checks (dangerous!)
             **kwargs: Additional parameters
 
         Returns:
@@ -641,17 +742,28 @@ class OmniClaw:
             purpose="Simulation",
         )
 
-        allowed, reason, passed_guards = await self._guard_manager.check(context)
-        if not allowed:
-            return SimulationResult(
-                would_succeed=False,
-                route=PaymentMethod.TRANSFER,
-                reason=f"Would be blocked by guard: {reason}",
-            )
+        passed_guards = []
+        if not skip_guards:
+            allowed, reason, passed_guards = await self._guard_manager.check(context)
+            if not allowed:
+                return SimulationResult(
+                    would_succeed=False,
+                    route=PaymentMethod.TRANSFER,
+                    reason=f"Would be blocked by guard: {reason}",
+                )
 
         # Trust Gate check (ERC-8004)
-        run_trust = check_trust if check_trust is not None else True
+        run_trust = check_trust if check_trust is not None else (not skip_guards)
         trust_result: TrustCheckResult | None = None
+        if self._trust_gate and run_trust:
+            if not self._trust_gate.is_configured:
+                if check_trust is True:
+                    return SimulationResult(
+                        would_succeed=False,
+                        route=PaymentMethod.TRANSFER,
+                        reason="Trust Gate requires OMNICLAW_RPC_URL to be configured",
+                    )
+                run_trust = False
         if self._trust_gate and run_trust:
             trust_result = await self._trust_gate.evaluate(
                 recipient_address=recipient,
@@ -706,6 +818,8 @@ class OmniClaw:
         purpose: str | None = None,
         expires_in: int | None = None,
         idempotency_key: str | None = None,
+        skip_guards: bool = False,
+        check_trust: bool | None = None,
         **kwargs: Any,
     ) -> PaymentIntent:
         """Create a Payment Intent (Authorize)."""
@@ -719,20 +833,29 @@ class OmniClaw:
         try:
             # Simulate check (Routing + Guards) strictly
             sim_result = await self.simulate(
-                wallet_id=wallet_id, recipient=recipient, amount=amount_decimal, **kwargs
+                wallet_id=wallet_id, recipient=recipient, amount=amount_decimal, 
+                skip_guards=skip_guards, check_trust=check_trust, **kwargs
             )
 
             if not sim_result.would_succeed:
-                raise PaymentError(f"Authorization failed: {sim_result.reason}")
+                # Allow intent creation if Trust Gate simply HELD the transaction for review
+                is_trust_held = sim_result.reason and "Trust Gate: HELD" in sim_result.reason
+                if not is_trust_held:
+                    raise PaymentError(f"Authorization failed: {sim_result.reason}")
 
             # Create Intent
             metadata = kwargs.copy()
             metadata.update(
                 {
                     "idempotency_key": idempotency_key,
-                    "simulated_route": sim_result.route.value,
+                    "simulated_route": getattr(sim_result.route, "value", str(sim_result.route)),
                 }
             )
+
+            is_trust_held = not sim_result.would_succeed and sim_result.reason and "Trust Gate: HELD" in sim_result.reason
+            if is_trust_held:
+                metadata["trust_status"] = "HELD"
+                metadata["trust_reason"] = sim_result.reason
 
             intent = await self._intent_service.create(
                 wallet_id=wallet_id, 
@@ -742,9 +865,15 @@ class OmniClaw:
                 expires_in=expires_in,
                 metadata=metadata
             )
+
+            # If the transaction requires manual review, map it to the correct Intent State
+            if is_trust_held:
+                from omniclaw.core.types import PaymentIntentStatus
+                await self._intent_service.update_status(intent.id, PaymentIntentStatus.REQUIRES_REVIEW)
+                intent.status = PaymentIntentStatus.REQUIRES_REVIEW
             
             # Layer 2: Reserve the funds in the ledger
-            await self._reservation.reserve(wallet_id, amount_decimal, intent.id)
+            await self._reservation.reserve(wallet_id, amount_decimal, intent.id, expires_at=intent.expires_at)
             intent.reserved_amount = amount_decimal
             
             return intent
@@ -758,13 +887,20 @@ class OmniClaw:
         if not intent:
             raise ValidationError(f"Intent not found: {intent_id}")
 
-        if intent.status != PaymentIntentStatus.REQUIRES_CONFIRMATION:
+        if intent.status not in (
+            PaymentIntentStatus.REQUIRES_CONFIRMATION,
+            PaymentIntentStatus.REQUIRES_REVIEW,
+        ):
             raise ValidationError(f"Intent cannot be confirmed. Status: {intent.status}")
 
         # Check expiry
         if intent.expires_at:
-            from datetime import datetime
-            if datetime.utcnow() > intent.expires_at:
+            from datetime import datetime, timezone
+            
+            now_utc = datetime.now(timezone.utc)
+            cmp_time = now_utc if intent.expires_at.tzinfo else now_utc.replace(tzinfo=None)
+            
+            if cmp_time > intent.expires_at:
                 # Auto-cancel expired intent and release reservation
                 await self._reservation.release(intent.id)
                 await self._intent_service.cancel(intent.id, reason="Expired")
@@ -781,6 +917,8 @@ class OmniClaw:
             purpose = exec_kwargs.pop("purpose", None)
             idempotency_key = exec_kwargs.pop("idempotency_key", None)
             exec_kwargs.pop("simulated_route", None)
+            exec_kwargs.pop("trust_status", None)
+            exec_kwargs.pop("trust_reason", None)
 
             # Execute Pay
             result = await self.pay(
@@ -789,6 +927,7 @@ class OmniClaw:
                 amount=intent.amount,
                 purpose=purpose,
                 idempotency_key=idempotency_key,
+                check_trust=False,
                 consume_intent_id=intent.id, # Key part: releases reservation inside the lock
                 **exec_kwargs,
             )
@@ -796,12 +935,14 @@ class OmniClaw:
             if result.success:
                 await self._intent_service.update_status(intent.id, PaymentIntentStatus.SUCCEEDED)
             else:
+                await self._reservation.release(intent.id)
                 await self._intent_service.update_status(intent.id, PaymentIntentStatus.FAILED)
 
             return result
 
         except Exception as e:
             # Mark failed on exception
+            await self._reservation.release(intent.id)
             await self._intent_service.update_status(intent.id, PaymentIntentStatus.FAILED)
             raise e
 
@@ -815,7 +956,10 @@ class OmniClaw:
         if not intent:
             raise ValidationError(f"Intent not found: {intent_id}")
 
-        if intent.status not in (PaymentIntentStatus.REQUIRES_CONFIRMATION,):
+        if intent.status not in (
+            PaymentIntentStatus.REQUIRES_CONFIRMATION,
+            PaymentIntentStatus.REQUIRES_REVIEW,
+        ):
             raise ValidationError(f"Cannot cancel intent in status: {intent.status}")
 
         # Layer 2: Release reserved funds
@@ -850,7 +994,7 @@ class OmniClaw:
 
         # Call Provider
         try:
-            tx_info = self._circle_client.get_transaction(tx_id)
+            tx_info = self._wallet_service._circle.get_transaction(tx_id)
         except Exception as e:
             raise PaymentError(f"Failed to fetch transaction from provider: {e}") from e
 
@@ -869,7 +1013,7 @@ class OmniClaw:
             new_status,
             tx_hash=tx_info.tx_hash,
             metadata_updates={
-                "last_synced": datetime.utcnow().isoformat(),
+                "last_synced": datetime.now(timezone.utc).isoformat(),
                 "provider_state": tx_info.state.value
                 if hasattr(tx_info.state, "value")
                 else str(tx_info.state),
