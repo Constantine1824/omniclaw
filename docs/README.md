@@ -12,7 +12,7 @@ This directory is organized by purpose instead of by audience overlap.
 ## Reference and Internal Notes
 
 - [ERC-8004 Spec Notes](erc_804_spec.md)
-- [Roadmap](ROADMAP.md)
+- [Roadmap](../ROADMAP.md)
 
 ## What Changed
 

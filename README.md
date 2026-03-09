@@ -358,7 +358,7 @@ Start here:
 - [Architecture and Features](docs/FEATURES.md)
 - [Cross-Chain Usage](docs/CCTP_USAGE.md)
 - [ERC-8004 Spec Notes](docs/erc_804_spec.md)
-- [Roadmap](docs/ROADMAP.md)
+- [Roadmap](ROADMAP.md)
 
 ## Development
 
