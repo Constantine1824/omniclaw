@@ -88,6 +88,59 @@ from omniclaw.identity.types import (
 )
 from omniclaw.trust.gate import TrustGate
 
+# Nanopayments (EIP-3009 Circle Gateway)
+from omniclaw.protocols.nanopayments import (
+    # Client
+    NanopaymentClient,
+    NanopaymentHTTPClient,
+    # Vault & Keys
+    NanoKeyVault,
+    NanoKeyStore,
+    # Adapter
+    NanopaymentAdapter,
+    NanopaymentProtocolAdapter,
+    # Wallet
+    GatewayWalletManager,
+    # Middleware
+    GatewayMiddleware,
+    PaymentRequiredHTTPException,
+    parse_price,
+    # Types
+    DepositResult,
+    GatewayBalance,
+    NanopaymentResult,
+    PaymentPayload,
+    PaymentRequirements,
+    SupportedKind,
+    VerifyResponse,
+    WithdrawResult,
+    # Exceptions
+    AuthorizationExpiredError,
+    AuthorizationNotYetValidError,
+    DepositError,
+    DuplicateKeyAliasError,
+    ERC20ApprovalError,
+    GatewayAPIError,
+    InsufficientBalanceError,
+    InvalidPriceError,
+    InvalidPrivateKeyError,
+    InvalidSignatureError,
+    KeyNotFoundError,
+    MiddlewareError,
+    NanopaymentError,
+    NanopaymentNotInitializedError,
+    NoDefaultKeyError,
+    NonceReusedError,
+    PaymentRequiredError,
+    SettlementError,
+    SignatureVerificationError,
+    SigningError,
+    UnsupportedNetworkError,
+    UnsupportedSchemeError,
+    VerificationError,
+    WithdrawError,
+)
+
 __version__ = "0.0.1"
 __all__ = [
     # Main Client
@@ -147,4 +200,53 @@ __all__ = [
     "TrustCheckResult",
     "AgentIdentity",
     "ReputationScore",
+    # Nanopayments (EIP-3009 Circle Gateway)
+    # Client
+    "NanopaymentClient",
+    "NanopaymentHTTPClient",
+    # Vault & Keys
+    "NanoKeyVault",
+    "NanoKeyStore",
+    # Adapter
+    "NanopaymentAdapter",
+    "NanopaymentProtocolAdapter",
+    # Wallet
+    "GatewayWalletManager",
+    # Middleware
+    "GatewayMiddleware",
+    "PaymentRequiredHTTPException",
+    "parse_price",
+    # Types
+    "DepositResult",
+    "GatewayBalance",
+    "NanopaymentResult",
+    "PaymentPayload",
+    "PaymentRequirements",
+    "SupportedKind",
+    "VerifyResponse",
+    "WithdrawResult",
+    # Exceptions
+    "NanopaymentError",
+    "NanopaymentNotInitializedError",
+    "AuthorizationExpiredError",
+    "AuthorizationNotYetValidError",
+    "DepositError",
+    "DuplicateKeyAliasError",
+    "ERC20ApprovalError",
+    "GatewayAPIError",
+    "InvalidPriceError",
+    "InvalidPrivateKeyError",
+    "InvalidSignatureError",
+    "KeyNotFoundError",
+    "MiddlewareError",
+    "NoDefaultKeyError",
+    "NonceReusedError",
+    "PaymentRequiredError",
+    "SettlementError",
+    "SignatureVerificationError",
+    "SigningError",
+    "UnsupportedNetworkError",
+    "UnsupportedSchemeError",
+    "VerificationError",
+    "WithdrawError",
 ]

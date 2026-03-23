@@ -15,11 +15,12 @@ Instead of wiring wallets, payment routing, guardrails, intents, trust checks, a
 - cross-chain USDC flows
 - payment intents with reservation handling
 - ERC-8004-style trust-aware checks
+- **nanopayments** — gas-free EIP-3009 USDC transfers via Circle Gateway (seller: `@agent.sell()`, buyer: automatic for micro-amounts)
 
 - Product: `OmniClaw`
 - Company: `Omnuron AI`
 - Official site: `omniclaw.ai`
-- SDK status: `405` passing SDK tests in `tests/`
+- SDK status: `1047` passing SDK tests in `tests/` (nanopayments: `286`)
 - Python: `>=3.10`
 - Package: `omniclaw`
 
@@ -86,6 +87,8 @@ Core workflow: verify setup, create a wallet, simulate the payment, then execute
 - Simulate payments before execution
 - Record transaction history in the built-in ledger
 - Optionally run ERC-8004 trust verification when an RPC URL is configured
+- **Receive nanopayments** as a seller via `@client.sell()` FastAPI decorator (EIP-3009 gas-free)
+- **Send nanopayments** as a buyer — micro-amounts automatically use Circle Gateway nanopayments
 
 ## Built For Production
 
@@ -99,6 +102,7 @@ Core workflow: verify setup, create a wallet, simulate the payment, then execute
 
 - Use Circle for wallet custody and transaction infrastructure.
 - Use x402 where pay-per-request HTTP payments make sense.
+- Use nanopayments for gas-free micro-transactions (EIP-3009 on Circle Gateway).
 - Use OmniClaw to orchestrate execution safely across those systems.
 
 That means fewer one-off payment scripts, less duplicated safety code, and a faster path from demo agent to production.

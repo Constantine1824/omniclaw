@@ -102,18 +102,18 @@ class Network(str, Enum):
 def normalize_network(network: Network | str | None) -> Network | None:
     """
     Normalize a network value to a Network enum.
-    
+
     Handles:
     - None -> None
     - Network enum -> Network enum (unchanged)
     - str -> Network enum (converted)
-    
+
     Args:
         network: Network enum, string, or None
-        
+
     Returns:
         Network enum or None
-        
+
     Raises:
         ValueError: If string cannot be converted to Network
     """
@@ -138,6 +138,7 @@ class PaymentMethod(str, Enum):
     X402 = "x402"  # HTTP 402 protocol payment
     TRANSFER = "transfer"  # Direct wallet-to-wallet transfer
     CROSSCHAIN = "crosschain"  # Cross-chain transfer (Gateway/CCTP/Bridge Kit)
+    NANOPAYMENT = "nanopayment"  # EIP-3009 Circle Gateway gasless micro-payments
 
 
 class PaymentStatus(str, Enum):
@@ -429,7 +430,9 @@ class PaymentIntent:
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "purpose": self.purpose,
             "cancel_reason": self.cancel_reason,
-            "reserved_amount": str(self.reserved_amount) if self.reserved_amount is not None else None,
+            "reserved_amount": str(self.reserved_amount)
+            if self.reserved_amount is not None
+            else None,
             "metadata": self.metadata,
             "client_secret": self.client_secret,
         }
@@ -449,7 +452,9 @@ class PaymentIntent:
             else None,
             purpose=data.get("purpose"),
             cancel_reason=data.get("cancel_reason"),
-            reserved_amount=Decimal(data["reserved_amount"]) if data.get("reserved_amount") else None,
+            reserved_amount=Decimal(data["reserved_amount"])
+            if data.get("reserved_amount")
+            else None,
             metadata=data.get("metadata", {}),
             client_secret=data.get("client_secret"),
         )

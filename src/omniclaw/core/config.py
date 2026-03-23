@@ -52,9 +52,9 @@ class Config:
     transaction_poll_timeout: float = 120.0
 
     # Environment & Logging
-    # log_level is already defined above
+    # log_level is already defined below
     env: str = "development"
-    
+
     # Wallet defaults
     default_wallet_id: str | None = None
 
@@ -67,6 +67,33 @@ class Config:
     confirm_always: bool = False
     confirm_threshold: str | None = None
 
+    # =====================================================================
+    # Nanopayments (EIP-3009 Circle Gateway batched settlement)
+    # =====================================================================
+    nanopayments_enabled: bool = True
+    """Enable nanopayments (EIP-3009 batched USDC micro-payments)."""
+
+    nanopayments_environment: str = "testnet"
+    """Circle Gateway environment: 'testnet' or 'mainnet'."""
+
+    nanopayments_auto_topup: bool = True
+    """Automatically deposit to Gateway when balance is low."""
+
+    nanopayments_topup_threshold: str = "1.00"
+    """Auto-topup threshold in USDC decimal (e.g. '1.00')."""
+
+    nanopayments_topup_amount: str = "10.00"
+    """Amount deposited when auto-topup triggers."""
+
+    nanopayments_micro_threshold: str = "1.00"
+    """Amount below which nanopayments are used instead of standard transfer."""
+
+    nanopayments_default_key_alias: str | None = None
+    """Default NanoKeyVault key alias for agents."""
+
+    nanopayments_default_network: str | None = None
+    """Default CAIP-2 network for nanopayments (e.g., 'eip155:1' for mainnet, 'eip155:11155111' for Sepolia)."""
+
     def __post_init__(self) -> None:
         if not self.circle_api_key:
             raise ValueError("circle_api_key is required")
@@ -76,6 +103,7 @@ class Config:
     @classmethod
     def from_env(cls, **overrides: Any) -> Config:
         """Load configuration from environment variables."""
+
         def override_or_env(name: str, env_name: str, default: Any = None) -> Any:
             if name in overrides:
                 return overrides[name]
@@ -124,6 +152,36 @@ class Config:
         )
         confirm_threshold = override_or_env("confirm_threshold", "OMNICLAW_CONFIRM_THRESHOLD")
 
+        # Nanopayments configuration
+        nanopayments_enabled = (
+            overrides.get("nanopayments_enabled")
+            if "nanopayments_enabled" in overrides
+            else (_get_env_var("OMNICLAW_NANOPAYMENTS_ENABLED", "true").lower() == "true")
+        )
+        nanopayments_env = override_or_env(
+            "nanopayments_environment", "OMNICLAW_NANOPAYMENTS_ENV", "testnet"
+        )
+        nanopayments_auto_topup = (
+            overrides.get("nanopayments_auto_topup")
+            if "nanopayments_auto_topup" in overrides
+            else (_get_env_var("OMNICLAW_NANOPAYMENTS_AUTO_TOPUP", "true").lower() == "true")
+        )
+        nanopayments_topup_threshold = override_or_env(
+            "nanopayments_topup_threshold", "OMNICLAW_NANOPAYMENTS_TOPUP_THRESHOLD", "1.00"
+        )
+        nanopayments_topup_amount = override_or_env(
+            "nanopayments_topup_amount", "OMNICLAW_NANOPAYMENTS_TOPUP_AMOUNT", "10.00"
+        )
+        nanopayments_micro_threshold = override_or_env(
+            "nanopayments_micro_threshold", "OMNICLAW_NANOPAYMENTS_MICRO_THRESHOLD", "1.00"
+        )
+        nanopayments_default_key_alias = override_or_env(
+            "nanopayments_default_key_alias", "OMNICLAW_NANOPAYMENTS_DEFAULT_KEY"
+        )
+        nanopayments_default_network = override_or_env(
+            "nanopayments_default_network", "OMNICLAW_NANOPAYMENTS_DEFAULT_NETWORK"
+        )
+
         return cls(
             circle_api_key=circle_api_key,  # type: ignore
             entity_secret=entity_secret,  # type: ignore
@@ -149,6 +207,13 @@ class Config:
             whitelisted_recipients=whitelisted_recipients,
             confirm_always=confirm_always,
             confirm_threshold=confirm_threshold,
+            nanopayments_enabled=nanopayments_enabled,
+            nanopayments_environment=nanopayments_env,
+            nanopayments_auto_topup=nanopayments_auto_topup,
+            nanopayments_topup_threshold=nanopayments_topup_threshold,
+            nanopayments_topup_amount=nanopayments_topup_amount,
+            nanopayments_micro_threshold=nanopayments_micro_threshold,
+            nanopayments_default_key_alias=nanopayments_default_key_alias,
         )
 
     def with_updates(self, **updates: Any) -> Config:
@@ -174,6 +239,13 @@ class Config:
             "whitelisted_recipients": self.whitelisted_recipients,
             "confirm_always": self.confirm_always,
             "confirm_threshold": self.confirm_threshold,
+            "nanopayments_enabled": self.nanopayments_enabled,
+            "nanopayments_environment": self.nanopayments_environment,
+            "nanopayments_auto_topup": self.nanopayments_auto_topup,
+            "nanopayments_topup_threshold": self.nanopayments_topup_threshold,
+            "nanopayments_topup_amount": self.nanopayments_topup_amount,
+            "nanopayments_micro_threshold": self.nanopayments_micro_threshold,
+            "nanopayments_default_key_alias": self.nanopayments_default_key_alias,
         }
         current.update(updates)
         return Config(**current)
