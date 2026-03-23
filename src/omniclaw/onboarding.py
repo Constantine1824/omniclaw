@@ -688,5 +688,52 @@ def print_setup_status() -> None:
         print("Setup incomplete. Run: quick_setup('YOUR_API_KEY')")
 
 
+def run_setup_cli(
+    api_key: str,
+    network: str = "ARC-TESTNET",
+    env_path: str = ".env",
+    force: bool = False,
+) -> int:
+    """
+    CLI handler for ``omniclaw setup``.
+
+    Wraps :func:`quick_setup` with pre-flight checks and user-friendly CLI
+    output.  Returns a shell exit code (0 = success, 1 = error, 2 = abort).
+    """
+    env_path_obj = Path(env_path).resolve()
+
+    if not CIRCLE_SDK_AVAILABLE:
+        print(
+            "Error: Circle SDK is not installed.\n"
+            "Install it with: pip install circle-developer-controlled-wallets",
+            file=sys.stderr,
+        )
+        return 1
+
+    managed_entry = load_managed_credentials(api_key)
+    env_exists = env_path_obj.exists()
+    if (managed_entry or env_exists) and not force:
+        print("Existing credentials detected:")
+        if env_exists:
+            print(f"  .env file: {env_path_obj}")
+        if managed_entry:
+            print(
+                f"  Managed entity secret: {managed_entry.get('entity_secret_masked', '****')}"
+            )
+        print("Re-run with --force to overwrite, or use 'omniclaw doctor' to inspect.")
+        return 2
+
+    try:
+        quick_setup(
+            api_key=api_key,
+            env_path=env_path_obj,
+            network=network,
+        )
+    except SetupError as exc:
+        print(f"\nSetup failed: {exc}", file=sys.stderr)
+        return 1
+
+    return 0
+
 # Backwards compatibility alias
 ensure_setup = quick_setup
