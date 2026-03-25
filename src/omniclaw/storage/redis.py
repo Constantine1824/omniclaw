@@ -124,10 +124,10 @@ class RedisStorage(StorageBackend):
         # INCRBYFLOAT is atomic
         # Note: Redis stores this as string
         new_val = await client.incrbyfloat(redis_key, float(amount))
-        
+
         # Add to index? Atomic counters might be separate from JSON docs.
         # Existing implementation adds to index. Let's keep it.
-        # But wait, query() expects JSON. 
+        # But wait, query() expects JSON.
         # get() handles non-JSON fallback. So this is fine.
         index_key = f"{self._prefix}:{collection}:_index"
         await client.sadd(index_key, key)
@@ -163,7 +163,7 @@ class RedisStorage(StorageBackend):
         client = self._get_client()
         redis_key = f"{self._prefix}:locks:{key}"
         token = str(uuid.uuid4())
-        
+
         # SET key token NX EX ttl
         result = await client.set(redis_key, token, nx=True, ex=ttl)
         if result:
@@ -177,13 +177,13 @@ class RedisStorage(StorageBackend):
     ) -> bool:
         """
         Release a lock safely using Lua script.
-        
+
         Only deletes the key if the stored value matches our token,
         preventing accidental release of another caller's lock.
         """
         client = self._get_client()
         redis_key = f"{self._prefix}:locks:{key}"
-        
+
         if token:
             # Safe release: atomic check-and-delete via Lua
             result = await client.eval(self._RELEASE_LOCK_SCRIPT, 1, redis_key, token)

@@ -20,7 +20,6 @@ For fallback (spec §7.2), pass comma-separated URLs:
 from __future__ import annotations
 
 import os
-from typing import Any
 
 import httpx
 
@@ -28,7 +27,6 @@ from omniclaw.core.erc8004 import (
     get_identity_registry,
     get_reputation_registry,
     get_validation_registry,
-    is_erc8004_supported,
 )
 from omniclaw.core.logging import get_logger
 from omniclaw.identity.types import FeedbackSignal
@@ -583,7 +581,7 @@ class ERC8004Provider:
 
         try:
             # Build minimum calldata with empty filters
-            selector = _FUNCTION_SELECTORS["readAllFeedback(uint256,address[],string,string,bool)"]
+            _FUNCTION_SELECTORS["readAllFeedback(uint256,address[],string,string,bool)"]
 
             # This is a complex ABI encoding with multiple dynamic params.
             # For reliability, fall back to iterative approach if encoding

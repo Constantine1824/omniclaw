@@ -73,8 +73,9 @@ class WalletService:
         self._config = config
         self.__circle = circle_client
 
-        # Cache for wallet lookups
+        # Cache for wallet lookups (bounded to prevent memory leaks)
         self._wallet_cache: dict[str, WalletInfo] = {}
+        self._wallet_cache_max_size: int = 1000
 
     @property
     def _circle(self) -> CircleClient:
@@ -155,6 +156,7 @@ class WalletService:
 
         wallet = wallets[0]
         self._wallet_cache[wallet.id] = wallet
+        self._evict_cache_if_needed()
 
         return wallet
 
@@ -188,6 +190,7 @@ class WalletService:
 
         for wallet in wallets:
             self._wallet_cache[wallet.id] = wallet
+        self._evict_cache_if_needed()
 
         return wallets
 
@@ -580,3 +583,12 @@ class WalletService:
     def clear_cache(self) -> None:
         """Clear the wallet cache."""
         self._wallet_cache.clear()
+
+    def _evict_cache_if_needed(self) -> None:
+        """Evict oldest entries if cache exceeds max size."""
+        if len(self._wallet_cache) > self._wallet_cache_max_size:
+            # Remove oldest entries (first inserted)
+            excess = len(self._wallet_cache) - self._wallet_cache_max_size + 100
+            keys_to_remove = list(self._wallet_cache.keys())[:excess]
+            for key in keys_to_remove:
+                del self._wallet_cache[key]

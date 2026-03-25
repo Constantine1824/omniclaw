@@ -8,7 +8,6 @@ off-chain signing of burn intents for gasless USDC transfers.
 from __future__ import annotations
 
 import secrets
-import struct
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any

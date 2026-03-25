@@ -25,8 +25,6 @@ import logging
 from typing import Any
 
 import web3
-from eth_account import Account
-from eth_account.messages import encode_typed_data
 
 from omniclaw.protocols.nanopayments.client import NanopaymentClient
 from omniclaw.protocols.nanopayments.exceptions import (
@@ -275,7 +273,8 @@ class GatewayWalletManager:
 
     def _atomic_to_decimal(self, amount_atomic: int) -> str:
         """Convert atomic units to decimal USDC string."""
-        return f"{amount_atomic / 1_000_000:.6f}"
+        from decimal import Decimal
+        return str(Decimal(amount_atomic) / Decimal("1000000"))
 
     def _build_tx(
         self, to: str, data: str, value: int = 0, nonce: int | None = None
@@ -591,40 +590,20 @@ class GatewayWalletManager:
         """
         Transfer USDC to another address on the SAME chain via Circle's API.
 
-        This is the standard way to withdraw from your Gateway balance.
-        It's instant and costs NO GAS (Circle covers settlement).
-
-        For cross-chain transfers, use transfer_crosschain() instead.
+        NOT YET IMPLEMENTED: This requires integration with Circle's Gateway
+        transfer API. Use initiate_trustless_withdrawal() for on-chain withdrawal.
 
         Args:
             amount_usdc: Amount in USDC decimal string.
             recipient_address: Destination EOA address on the same chain.
 
-        Returns:
-            WithdrawResult with transfer details.
-
-        Note:
-            This method is provided for completeness, but in practice, same-chain
-            transfers within Gateway are handled automatically through the
-            nanopayment settlement system. Use this for explicit withdrawals
-            to an external address.
+        Raises:
+            NotImplementedError: Always. This feature is not yet implemented.
         """
-        amount = self._decimal_to_atomic(amount_usdc)
-
-        logger.info(
-            f"Same-chain transfer requested: {amount_usdc} USDC to {recipient_address} "
-            f"on {self._network}. "
-            f"Note: Same-chain transfers within Gateway are typically handled via "
-            f"nanopayment settlements. For explicit withdrawals, use Circle's API directly."
-        )
-
-        return WithdrawResult(
-            mint_tx_hash="",  # No mint for same-chain
-            amount=amount,
-            formatted_amount=f"{amount_usdc} USDC",
-            source_chain=self._network,
-            destination_chain=self._network,
-            recipient=recipient_address,
+        raise NotImplementedError(
+            "Same-chain Gateway transfers via API are not yet implemented. "
+            "Use initiate_trustless_withdrawal() for on-chain withdrawal, "
+            "or deposit() + nanopayment settlement for off-chain transfers."
         )
 
     async def transfer_crosschain(
@@ -636,36 +615,22 @@ class GatewayWalletManager:
         """
         Transfer USDC to another address on a DIFFERENT chain via Circle's API.
 
-        This uses Circle's instant transfer system. It's fast and Circle covers
-        the gas costs through batched settlement.
+        NOT YET IMPLEMENTED: This requires integration with Circle's Gateway
+        cross-chain transfer API. Use the CCTP GatewayAdapter for cross-chain
+        transfers, or initiate_trustless_withdrawal() for on-chain withdrawal.
 
         Args:
             amount_usdc: Amount in USDC decimal string.
             destination_chain: Target CAIP-2 chain (e.g., 'eip155:137' for Polygon).
             recipient_address: Destination address on the target chain.
 
-        Returns:
-            WithdrawResult with transfer details.
-
-        Note:
-            Cross-chain transfers are handled via Circle's burn/mint mechanism.
-            The actual implementation uses Circle's API internally.
+        Raises:
+            NotImplementedError: Always. This feature is not yet implemented.
         """
-        amount = self._decimal_to_atomic(amount_usdc)
-
-        logger.info(
-            f"Cross-chain transfer requested: {amount_usdc} USDC from {self._network} "
-            f"to {recipient_address} on {destination_chain}. "
-            f"This transfer is processed via Circle's API."
-        )
-
-        return WithdrawResult(
-            mint_tx_hash="",  # Filled by API
-            amount=amount,
-            formatted_amount=f"{amount_usdc} USDC",
-            source_chain=self._network,
-            destination_chain=destination_chain,
-            recipient=recipient_address,
+        raise NotImplementedError(
+            "Cross-chain Gateway transfers via API are not yet implemented. "
+            "Use the CCTP GatewayAdapter for cross-chain transfers, "
+            "or initiate_trustless_withdrawal() for on-chain withdrawal."
         )
 
     # -------------------------------------------------------------------------

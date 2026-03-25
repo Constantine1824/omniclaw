@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
-import time
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -66,11 +64,11 @@ class GatewayAdapter(ProtocolAdapter):
         **kwargs: Any,
     ) -> PaymentResult:
         """Execute a cross-chain transfer."""
-        
+
         source_network = source_network or self._config.network
-        
+
         use_fast_transfer = kwargs.get("use_fast_transfer", True)
-        
+
         if not destination_chain:
             return PaymentResult(
                 success=False,
@@ -82,7 +80,7 @@ class GatewayAdapter(ProtocolAdapter):
                 status=PaymentStatus.FAILED,
                 error="destination_chain parameter is required",
             )
-        
+
         destination_address = recipient
 
         # Normalize network types to Network enums
@@ -91,7 +89,7 @@ class GatewayAdapter(ProtocolAdapter):
 
         if source_network == destination_chain:
             try:
-                transfer_result = self._wallet_service.transfer(
+                transfer_result = await self._wallet_service.transfer(
                     wallet_id=wallet_id,
                     destination_address=destination_address,
                     amount=amount,
@@ -100,8 +98,6 @@ class GatewayAdapter(ProtocolAdapter):
                     idempotency_key=idempotency_key,
                     timeout_seconds=timeout_seconds,
                 )
-                if inspect.isawaitable(transfer_result):
-                    transfer_result = await transfer_result
 
                 # Backward compatibility for tests/mocks that return a raw tx object
                 if not hasattr(transfer_result, "success"):
@@ -216,7 +212,7 @@ class GatewayAdapter(ProtocolAdapter):
     ) -> PaymentResult:
         """
         Execute a CCTP V2 cross-chain transfer.
-        
+
         Args:
             wallet_id: Source wallet ID
             source_network: Source chain
@@ -235,7 +231,6 @@ class GatewayAdapter(ProtocolAdapter):
             STANDARD_TRANSFER_THRESHOLD,
             USDC_CONTRACTS,
             get_iris_v2_attestation_url,
-            get_message_transmitter_v2,
             get_token_messenger_v2,
             is_cctp_supported,
         )
@@ -304,7 +299,7 @@ class GatewayAdapter(ProtocolAdapter):
         if source_network != Network.ARC_TESTNET:
             try:
                 from omniclaw.utils.gas import check_gas_requirements
-                
+
                 try:
                     native_balance = self._wallet_service.get_native_balance(wallet_id)
                     has_gas, gas_error = check_gas_requirements(
@@ -344,7 +339,7 @@ class GatewayAdapter(ProtocolAdapter):
             for wait_attempt in range(60):  # 2 minutes max
                 await asyncio.sleep(2)
                 updated_approve_tx = self._wallet_service._circle.get_transaction(approve_tx.id)
-                
+
                 if updated_approve_tx.state in (
                     TransactionState.CONFIRMED,
                     TransactionState.COMPLETE,
@@ -370,7 +365,7 @@ class GatewayAdapter(ProtocolAdapter):
                     approval_confirmed = True
                     self._logger.info(f"CCTP V2: Approval confirmed: {updated_approve_tx.tx_hash}")
                     break
-                    
+
                 if wait_attempt % 5 == 0:
                     self._logger.debug(f"Waiting for approval... state={updated_approve_tx.state}")
 
@@ -418,19 +413,19 @@ class GatewayAdapter(ProtocolAdapter):
                 ],
                 fee_level=fee_level,
             )
-            
+
             # Wait for burn transaction to be confirmed and get tx_hash
             self._logger.info("CCTP V2: Waiting for burn transaction confirmation...")
             burn_tx_hash = None
             for wait_attempt in range(150):  # 150 attempts * 2 seconds = 5 minutes max
                 await asyncio.sleep(2)
                 updated_tx = self._wallet_service._circle.get_transaction(burn_tx.id)
-                
+
                 if updated_tx.tx_hash:
                     burn_tx_hash = updated_tx.tx_hash
                     self._logger.info(f"CCTP V2: Burn tx confirmed: {burn_tx_hash}")
                     break
-                
+
                 if updated_tx.state in (
                     TransactionState.CONFIRMED,
                     TransactionState.COMPLETE,
@@ -451,15 +446,15 @@ class GatewayAdapter(ProtocolAdapter):
                             status=PaymentStatus.FAILED,
                             error="Burn transaction reverted on blockchain (Check gas/parameters)",
                             metadata={
-                                "burn_tx_id": burn_tx.id, 
+                                "burn_tx_id": burn_tx.id,
                                 "burn_tx_state": updated_tx.state
                             }
                         )
                     break
-                    
+
                 if wait_attempt % 5 == 0:  # Log every 10 seconds
                     self._logger.debug(f"Waiting for burn tx... state={updated_tx.state}")
-            
+
             if not burn_tx_hash:
                 return PaymentResult(
                     success=False,
@@ -471,35 +466,35 @@ class GatewayAdapter(ProtocolAdapter):
                     status=PaymentStatus.FAILED,
                     error="Burn transaction did not confirm within 5 minutes",
                 )
-            
+
             # Step 3: Poll for attestation from Circle Iris API
             self._logger.info(f"CCTP V2: Polling for attestation (Fast Transfer: {use_fast_transfer})")
             attestation_url = get_iris_v2_attestation_url(
                 source_network, source_domain, burn_tx_hash
             )
-            
+
             attestation_message = None
             attestation_signature = None
             max_attempts = 240  # 240 attempts × 5 seconds = 20 minutes for Standard Transfer
             attempt = 0
-            
+
             self._logger.info(f"Attestation URL: {attestation_url}")
-            
+
             while attempt < max_attempts:
                 try:
                     async with httpx.AsyncClient() as client:
                         response = await client.get(attestation_url, timeout=10.0)
-                        
+
                         if response.status_code == 200:
                             data = response.json()
                             messages = data.get("messages", [])
-                            
+
                             if messages and len(messages) > 0:
                                 message_data = messages[0]
                                 status = message_data.get("status")
-                                
+
                                 self._logger.debug(f"Attempt {attempt + 1}: status={status}")
-                                
+
                                 if status == "complete":
                                     attestation_signature = message_data.get("attestation")
                                     attestation_message = message_data.get("message")
@@ -511,14 +506,14 @@ class GatewayAdapter(ProtocolAdapter):
                             self._logger.debug(f"Transaction not yet indexed (attempt {attempt + 1})")
                         else:
                             self._logger.debug(f"HTTP {response.status_code}")
-                            
+
                 except Exception as e:
                     self._logger.debug(f"Poll attempt {attempt + 1} failed: {e}")
-                
+
                 attempt += 1
                 if attempt < max_attempts:
                     await asyncio.sleep(5)
-            
+
             if not attestation_signature or not attestation_message:
                 self._logger.warning("CCTP V2: Attestation polling timed out")
                 return PaymentResult(
@@ -536,20 +531,20 @@ class GatewayAdapter(ProtocolAdapter):
                         "attestation_url": attestation_url,
                     },
                 )
-            
+
             # Step 4: Cross-Chain Transfer Handoff or Agent-Side Mint
             # If max_fee > 0, we generally assume Forwarding Service (Relayer) will pick it up.
             # However, for some networks (like Arc Testnet) or if max_fee == 0, we perform Agent-Side Minting.
-            
+
             is_relayed = max_fee > 0
             should_mint = not is_relayed or dest_network == Network.ARC_TESTNET
-            
+
             mint_result = None
-            
+
             if should_mint:
                 self._logger.info(f"CCTP V2: Attempting Agent-Side Mint (relayed={is_relayed}, dest={dest_network.value})")
                 mint_result = await self._mint_usdc(attestation_message, attestation_signature, dest_network)
-                
+
                 if mint_result["success"]:
                     note = f"Transfer completed via Agent-Side Mint. Tx: {mint_result.get('tx_hash')}"
                     blockchain_final_tx = mint_result.get('tx_hash')
@@ -560,7 +555,7 @@ class GatewayAdapter(ProtocolAdapter):
                 note = "Transfer handed off to CCTP Relayer/Forwarding Service for final minting"
                 blockchain_final_tx = None
                 self._logger.info(f"CCTP V2: Attestation secured. {note} (max_fee={max_fee})")
-            
+
             return PaymentResult(
                 success=True,
                 transaction_id=burn_tx.id,
@@ -669,32 +664,32 @@ class GatewayAdapter(ProtocolAdapter):
     ) -> dict[str, Any]:
         """
         Mint USDC on the destination chain via the Agent SDK (Agent-Side Minting).
-        
+
         Args:
             attestation_message: The message bytes (hex)
             attestation_signature: The signature bytes (hex)
             dest_network: Destination network
-            
+
         Returns:
             Dict with mint transaction details
         """
         from omniclaw.core.cctp_constants import get_message_transmitter_v2
-        
+
         message_transmitter = get_message_transmitter_v2(dest_network)
         if not message_transmitter:
             return {"success": False, "error": f"No MessageTransmitter configured for {dest_network.value}"}
-            
+
         # Find a wallet on the destination chain to execute the transaction
         # Any wallet with gas can do this
         executor_wallet = await self._get_executor_wallet(dest_network)
         if not executor_wallet:
             return {
-                "success": False, 
+                "success": False,
                 "error": f"No wallet found on {dest_network.value} to execute minting. Please create a wallet on this network with native gas tokens."
             }
-            
+
         self._logger.info(f"CCTP V2: Minting via wallet {executor_wallet.id} on {dest_network.value}")
-        
+
         try:
             # receiveMessage(message, attestation)
             mint_tx = self._wallet_service._circle.create_contract_execution(
@@ -704,26 +699,30 @@ class GatewayAdapter(ProtocolAdapter):
                 abi_parameters=[attestation_message, attestation_signature],
                 fee_level=FeeLevel.MEDIUM,
             )
-            
+
             # Wait for mint confirmation
             self._logger.info("CCTP V2: Waiting for mint transaction confirmation...")
             mint_tx_hash = None
             for wait_attempt in range(60):
                 await asyncio.sleep(2)
                 updated_tx = self._wallet_service._circle.get_transaction(mint_tx.id)
-                
+
                 if updated_tx.tx_hash:
                     mint_tx_hash = updated_tx.tx_hash
-                    
-                if updated_tx.state in ["CONFIRMED", "COMPLETE", "FAILED"]:
-                    if updated_tx.state == "FAILED":
+
+                if updated_tx.state in (
+                    TransactionState.CONFIRMED,
+                    TransactionState.COMPLETE,
+                    TransactionState.FAILED,
+                ):
+                    if updated_tx.state == TransactionState.FAILED:
                         return {
-                            "success": False, 
+                            "success": False,
                             "error": "Mint transaction FAILED on blockchain",
                             "tx_id": mint_tx.id,
                             "tx_hash": updated_tx.tx_hash
                         }
-                    
+
                     self._logger.info(f"CCTP V2: Mint confirmed: {updated_tx.tx_hash}")
                     return {
                         "success": True,
@@ -731,7 +730,7 @@ class GatewayAdapter(ProtocolAdapter):
                         "tx_hash": updated_tx.tx_hash,
                         "executor_wallet": executor_wallet.id
                     }
-                    
+
             if mint_tx_hash:
                 return {
                     "success": True,
@@ -746,7 +745,7 @@ class GatewayAdapter(ProtocolAdapter):
                 "error": "Mint transaction timed out (no hash generated)",
                 "tx_id": mint_tx.id
             }
-            
+
         except Exception as e:
             self._logger.error(f"CCTP V2: Mint exception: {e}")
             return {"success": False, "error": str(e)}
@@ -756,17 +755,17 @@ class GatewayAdapter(ProtocolAdapter):
         try:
             # List all wallets for this network
             wallets = self._wallet_service.list_wallets(blockchain=network)
-            
+
             # Filter for active wallets
             active_wallets = [w for w in wallets if w.state == "LIVE"]
-            
+
             if not active_wallets:
                 return None
-                
+
             # Ideally checks for gas, but for now return the first one
             # The user should ensure their wallets are funded
             return active_wallets[0]
-            
+
         except Exception as e:
             self._logger.error(f"Failed to find executor wallet: {e}")
             return None

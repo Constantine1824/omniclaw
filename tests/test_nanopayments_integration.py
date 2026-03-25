@@ -790,7 +790,7 @@ class TestGatewayWalletManagerIntegration:
 
             # Gas reserve check mocks
             mock_w3.eth.get_balance.return_value = 10**18  # 1 ETH in wei
-            mock_w3.eth.gas_price.return_value = 30_000_000_000  # 30 gwei
+            mock_w3.eth.gas_price = 30_000_000_000  # 30 gwei (attribute)
             mock_w3.from_wei = lambda v, unit: v / 1e18 if unit == "ether" else v
 
             mock_account = MagicMock()
@@ -833,7 +833,7 @@ class TestGatewayWalletManagerIntegration:
 
     @pytest.mark.asyncio
     async def test_withdraw_creates_withdrawal_tx(self, mock_client: MagicMock):
-        """withdraw() calls withdraw on gateway contract."""
+        """withdraw() raises NotImplementedError (transfer stubs not yet implemented)."""
         private_key, address = generate_eoa_keypair()
 
         with patch("omniclaw.protocols.nanopayments.wallet.web3") as mock_web3_module:
@@ -863,15 +863,12 @@ class TestGatewayWalletManagerIntegration:
                 nanopayment_client=mock_client,
             )
 
-            result = await manager.withdraw(
-                amount_usdc="5.00",
-                destination_chain=None,
-                recipient=None,
-            )
-
-            assert result.mint_tx_hash is not None
-            assert result.amount == 5_000_000
-            assert result.source_chain == "eip155:5042002"
+            with pytest.raises(NotImplementedError):
+                await manager.withdraw(
+                    amount_usdc="5.00",
+                    destination_chain=None,
+                    recipient=None,
+                )
 
 
 # =============================================================================
@@ -2359,7 +2356,7 @@ class TestGatewayWalletManagerCoverage:
         mgr._w3 = MagicMock()
         mgr._w3.eth = MagicMock()
         mgr._w3.eth.get_balance.return_value = 100_000_000_000_000  # 0.0001 ETH
-        mgr._w3.eth.gas_price.return_value = 1_000_000_000_000_000_000  # 1000 gwei
+        mgr._w3.eth.gas_price = 1_000_000_000_000_000_000  # 1000 gwei (direct value)
         mgr._w3.from_wei = MagicMock(side_effect=lambda x, y: float(x) / 1e18)
 
         with pytest.raises(InsufficientGasError):
@@ -2370,7 +2367,7 @@ class TestGatewayWalletManagerCoverage:
         mgr = self._make_wallet_manager()
         mgr._w3 = MagicMock()
         mgr._w3.eth = MagicMock()
-        mgr._w3.eth.gas_price.return_value = 20_000_000_000  # 20 gwei
+        mgr._w3.eth.gas_price = 20_000_000_000  # 20 gwei (direct value)
 
         result = mgr.estimate_gas_cost_wei()
         assert isinstance(result, int)
@@ -2398,7 +2395,7 @@ class TestGatewayWalletManagerCoverage:
         mgr = self._make_wallet_manager()
 
         result = mgr._atomic_to_decimal(1_500_000)
-        assert result == "1.500000"
+        assert result == "1.5"
 
     def test_decimal_to_atomic_valid(self):
         """Lines 266-274: _decimal_to_atomic() with valid input."""
@@ -2774,7 +2771,7 @@ class TestOmniClawNanopaymentsIntegration:
 
                         wallet_set, wallet = await client.create_agent(
                             agent_name="test-agent",
-                            nanopayment_key_alias=True,  # Auto-generate key
+                            nanopayment_key_alias="agent-test-agent-nano",
                         )
 
                         # Wallet was created

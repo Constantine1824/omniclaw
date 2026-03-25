@@ -681,8 +681,8 @@ class PaymentInfo:
     @property
     def amount_decimal(self) -> str:
         """Amount as decimal USDC string."""
-        atomic = int(self.amount)
-        return str(atomic / 1_000_000)
+        from decimal import Decimal
+        return str(Decimal(self.amount) / Decimal("1000000"))
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dict."""
@@ -710,8 +710,8 @@ class DepositResult:
     approval_tx_hash: str | None
     """None if no approval was needed (already had sufficient allowance)."""
 
-    deposit_tx_hash: str
-    """The on-chain transaction hash for the deposit."""
+    deposit_tx_hash: str | None
+    """The on-chain transaction hash for the deposit. None if skipped due to insufficient gas."""
 
     amount: int
     """Amount deposited in USDC atomic units."""

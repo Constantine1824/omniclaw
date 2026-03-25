@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from omniclaw.core.types import PaymentMethod, PaymentResult, PaymentStatus
 from omniclaw.protocols.nanopayments import (
     DEFAULT_GATEWAY_AUTO_TOPUP_AMOUNT,
     DEFAULT_GATEWAY_AUTO_TOPUP_THRESHOLD,
@@ -40,7 +41,6 @@ from omniclaw.protocols.nanopayments.exceptions import (
     GatewayConnectionError,
     GatewayTimeoutError,
     InsufficientBalanceError,
-    InsufficientGatewayBalanceError,
     NonceReusedError,
     SettlementError,
     UnsupportedSchemeError,
@@ -68,8 +68,7 @@ def _decimal_to_atomic(amount_decimal: str) -> int:
 
 def _atomic_to_decimal(amount_atomic: int | str) -> str:
     """Convert atomic units to decimal USDC string."""
-    atomic = int(amount_atomic)
-    return str(atomic / 1_000_000)
+    return str(Decimal(str(amount_atomic)) / Decimal("1000000"))
 
 
 def _is_success_status(status_code: int) -> bool:
@@ -741,11 +740,11 @@ class NanopaymentAdapter:
 
                     await asyncio.sleep(delay)
                 # else: no more retries, raise
-            except NonceReusedError as exc:
+            except NonceReusedError:
                 # Non-recoverable - nonce already used
                 self._circuit_breaker.record_failure()
                 raise
-            except InsufficientBalanceError as exc:
+            except InsufficientBalanceError:
                 # Non-recoverable - insufficient balance
                 self._circuit_breaker.record_failure()
                 raise
@@ -953,8 +952,6 @@ class NanopaymentProtocolAdapter:
         Returns:
             PaymentResult with nanopayment details.
         """
-        from omniclaw.core.types import PaymentMethod, PaymentResult, PaymentStatus
-
         try:
             if _is_url(recipient):
                 result = await self._adapter.pay_x402_url(

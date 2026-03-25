@@ -33,11 +33,16 @@ from omniclaw.protocols.nanopayments.exceptions import (
     NoDefaultKeyError,
 )
 from omniclaw.protocols.nanopayments.keys import NanoKeyStore
-from omniclaw.protocols.nanopayments.signing import generate_eoa_keypair
 
 if TYPE_CHECKING:
     from omniclaw.storage.base import StorageBackend
-    from omniclaw.protocols.nanopayments.types import ResourceInfo
+    from omniclaw.protocols.nanopayments.types import (
+        GatewayBalance,
+        PaymentPayload,
+        PaymentRequirementsKind,
+        ResourceInfo,
+    )
+    from omniclaw.protocols.nanopayments.wallet import GatewayWalletManager
 
 logger = logging.getLogger(__name__)
 
@@ -384,7 +389,7 @@ class NanoKeyVault:
         # Attach resource info (required by Circle Gateway)
         if resource is not None:
             # PaymentPayload is frozen, so we need to recreate it
-            from omniclaw.protocols.nanopayments.types import PaymentPayload, ResourceInfo
+            from omniclaw.protocols.nanopayments.types import PaymentPayload
 
             payload = PaymentPayload(
                 x402_version=payload.x402_version,
@@ -495,7 +500,7 @@ class NanoKeyVault:
     # Gateway Wallet Manager integration
     # -------------------------------------------------------------------------
 
-    def create_wallet_manager(
+    async def create_wallet_manager(
         self,
         alias: str | None = None,
         rpc_url: str | None = None,
@@ -521,14 +526,14 @@ class NanoKeyVault:
 
         Raises:
             RuntimeError: If RPC URL is not provided and no default is configured.
+            KeyNotFoundError: If the alias doesn't exist.
+            NoDefaultKeyError: If alias is None and no default key is set.
         """
         import os
         from omniclaw.protocols.nanopayments.wallet import GatewayWalletManager
 
-        # Get the key's network and raw private key
-        # Note: get_raw_key is async, so we need to get it differently
-        # For now, we'll require the caller to pass the private key
-        # or use a synchronous approach
+        # Get the real private key from the vault
+        private_key = await self.get_raw_key(alias)
 
         if rpc_url is None:
             # Try to get from environment
@@ -548,10 +553,8 @@ class NanoKeyVault:
                     "RPC_URL or RPC_URL_EIP155_CHAINID environment variable."
                 )
 
-        # Create wallet manager - requires synchronous access to private key
-        # This is only used internally for deposit/withdraw operations
         return GatewayWalletManager(
-            private_key="",  # Will be set from vault when needed
+            private_key=private_key,
             network=self._default_network,
             rpc_url=rpc_url,
             nanopayment_client=self._client,

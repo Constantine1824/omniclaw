@@ -642,7 +642,7 @@ class OmniClaw:
         agent_name: str,
         blockchain: Network | str | None = None,
         apply_default_guards: bool = True,
-        nanopayment_key_alias: str | None = None,
+        nanopayment_key_alias: str | bool | None = None,
     ) -> tuple[WalletSetInfo, WalletInfo]:
         """
         Create a wallet for an AI agent with optional nanopayment key.
@@ -704,6 +704,9 @@ class OmniClaw:
         """Async context manager exit — clean up resources."""
         # Close Trust Gate (HTTP clients for metadata fetching)
         await self._trust_gate.close()
+        # Close nanopayment HTTP client if it was created
+        if self._nano_http:
+            await self._nano_http.aclose()
         # Close any HTTP clients held by protocol adapters
         for adapter in self._router.get_adapters():
             client = getattr(adapter, "_http_client", None)

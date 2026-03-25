@@ -398,39 +398,25 @@ class TestCreateWalletManager:
     @pytest.mark.asyncio
     async def test_create_wallet_manager_requires_rpc_url(self, vault, storage):
         """Lines 527-531: Raises ValueError when rpc_url is None and no env vars."""
-        await storage.save(
-            "nano_keys",
-            "test-key",
-            {
-                "encrypted_key": "encrypted",
-                "address": ADDRESS,
-                "network": "eip155:1",
-            },
-        )
+        # Add a real key so get_raw_key can decrypt it
+        await vault.add_key("test-key", PRIVATE_KEY)
 
         # No RPC URL and no env vars set
         with pytest.raises(ValueError) as exc_info:
-            vault.create_wallet_manager("test-key", rpc_url=None)
+            await vault.create_wallet_manager("test-key", rpc_url=None)
 
         assert "rpc_url is required" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_create_wallet_manager_with_rpc_url(self, vault, storage):
         """Lines 535-543: With explicit rpc_url, creates manager."""
-        await storage.save(
-            "nano_keys",
-            "test-key",
-            {
-                "encrypted_key": "encrypted",
-                "address": ADDRESS,
-                "network": "eip155:1",
-            },
-        )
+        # Add a real key so get_raw_key can decrypt it
+        await vault.add_key("test-key", PRIVATE_KEY)
 
         with patch("omniclaw.protocols.nanopayments.wallet.GatewayWalletManager") as MockManager:
             MockManager.return_value = MagicMock()
 
-            manager = vault.create_wallet_manager(
+            manager = await vault.create_wallet_manager(
                 alias="test-key",
                 rpc_url="https://rpc.example.com",
             )
@@ -443,15 +429,8 @@ class TestCreateWalletManager:
     @pytest.mark.asyncio
     async def test_create_wallet_manager_uses_env_rpc(self, vault, storage):
         """Lines 520-525: Uses RPC_URL from environment."""
-        await storage.save(
-            "nano_keys",
-            "test-key",
-            {
-                "encrypted_key": "encrypted",
-                "address": ADDRESS,
-                "network": "eip155:1",
-            },
-        )
+        # Add a real key so get_raw_key can decrypt it
+        await vault.add_key("test-key", PRIVATE_KEY)
 
         with patch.dict("os.environ", {"RPC_URL": "https://env-rpc.example.com"}):
             with patch(
@@ -459,7 +438,7 @@ class TestCreateWalletManager:
             ) as MockManager:
                 MockManager.return_value = MagicMock()
 
-                manager = vault.create_wallet_manager(
+                manager = await vault.create_wallet_manager(
                     alias="test-key",
                     rpc_url=None,  # Not provided
                 )
@@ -470,15 +449,8 @@ class TestCreateWalletManager:
     @pytest.mark.asyncio
     async def test_create_wallet_manager_uses_network_specific_env(self, vault, storage):
         """Lines 520-522: Uses network-specific RPC_URL_EIP155_X env var."""
-        await storage.save(
-            "nano_keys",
-            "test-key",
-            {
-                "encrypted_key": "encrypted",
-                "address": ADDRESS,
-                "network": "eip155:1",
-            },
-        )
+        # Add a real key so get_raw_key can decrypt it
+        await vault.add_key("test-key", PRIVATE_KEY)
 
         # The default network for testnet is eip155:11155111
         with patch.dict(
@@ -489,7 +461,7 @@ class TestCreateWalletManager:
             ) as MockManager:
                 MockManager.return_value = MagicMock()
 
-                manager = vault.create_wallet_manager(
+                manager = await vault.create_wallet_manager(
                     alias="test-key",
                     rpc_url=None,
                 )
@@ -500,20 +472,13 @@ class TestCreateWalletManager:
     @pytest.mark.asyncio
     async def test_create_wallet_manager_with_explicit_params(self, vault, storage):
         """Passes through gateway_address, usdc_address, cctp_gateway_address."""
-        await storage.save(
-            "nano_keys",
-            "test-key",
-            {
-                "encrypted_key": "encrypted",
-                "address": ADDRESS,
-                "network": "eip155:1",
-            },
-        )
+        # Add a real key so get_raw_key can decrypt it
+        await vault.add_key("test-key", PRIVATE_KEY)
 
         with patch("omniclaw.protocols.nanopayments.wallet.GatewayWalletManager") as MockManager:
             MockManager.return_value = MagicMock()
 
-            manager = vault.create_wallet_manager(
+            manager = await vault.create_wallet_manager(
                 alias="test-key",
                 rpc_url="https://rpc.example.com",
                 gateway_address="0xGateway123",

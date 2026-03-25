@@ -21,7 +21,7 @@ from omniclaw.core.erc8004 import (
     is_erc8004_supported,
 )
 from omniclaw.core.logging import get_logger
-from omniclaw.identity.types import AgentIdentity, AgentService
+from omniclaw.identity.types import AgentIdentity
 
 if TYPE_CHECKING:
     from omniclaw.core.types import Network

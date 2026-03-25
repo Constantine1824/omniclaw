@@ -11,10 +11,11 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from omniclaw.core.exceptions import ProtocolError
+from omniclaw.core.exceptions import InsufficientBalanceError, ProtocolError, WalletError
 from omniclaw.core.logging import get_logger
 from omniclaw.core.types import (
     FeeLevel,
+    Network,
     PaymentMethod,
     PaymentResult,
     PaymentStatus,
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 
 # Header names
 HEADER_PAYMENT_SIGNATURE = "PAYMENT-SIGNATURE"  # V2
-HEADER_PAYMENT_RESPONSE = "PAYMENT-RESPONSE"   # V2
+HEADER_PAYMENT_RESPONSE = "PAYMENT-RESPONSE"  # V2
 HEADER_PAYMENT_REQUIRED_V1 = "X-Payment-Required"  # V1 Legacy
 
 # URL pattern for detecting x402-compatible endpoints
@@ -49,13 +50,53 @@ class PaymentRequirements:
 
     @classmethod
     def from_response(cls, response: httpx.Response) -> PaymentRequirements:
-        """Parse requirements from 402 response (Body or Header)."""
+        """Parse requirements from 402 response (V2 Header, V2 Body, or V1 Header)."""
+        # Try V2 Header (PAYMENT-REQUIRED, base64-encoded JSON)
+        # HTTP headers are case-insensitive per RFC 7230
+        payment_required_v2 = response.headers.get(
+            "payment-required"
+        ) or response.headers.get("PAYMENT-REQUIRED")
+        if payment_required_v2:
+            try:
+                decoded = base64.b64decode(payment_required_v2)
+                data = json.loads(decoded)
+                # V2 format: {x402Version, accepts: [{scheme, network, asset, amount, payTo, ...}]}
+                accepts = data.get("accepts", [])
+                if accepts:
+                    kind = accepts[0]
+                    return cls(
+                        scheme=kind.get("scheme", "exact"),
+                        network=kind.get("network", ""),
+                        max_amount_required=kind.get("amount", "0"),
+                        resource=str(response.url),
+                        description="",
+                        recipient=kind.get("payTo", ""),
+                        extra=kind.get("extra"),
+                    )
+            except Exception:
+                pass
+
         # Try V2 Body (JSON)
         try:
             data = response.json()
             if "requirements" in data:
                 data = data["requirements"]
 
+            # Handle V2 body with 'accepts' array
+            accepts = data.get("accepts")
+            if accepts and isinstance(accepts, list):
+                kind = accepts[0]
+                return cls(
+                    scheme=kind.get("scheme", "exact"),
+                    network=kind.get("network", ""),
+                    max_amount_required=kind.get("amount", "0"),
+                    resource=str(response.url),
+                    description="",
+                    recipient=kind.get("payTo", ""),
+                    extra=kind.get("extra"),
+                )
+
+            # Legacy body format
             return cls(
                 scheme=data.get("scheme", "exact"),
                 network=data.get("network", ""),
@@ -170,7 +211,13 @@ class X402Adapter(ProtocolAdapter):
         """Return payment method type."""
         return PaymentMethod.X402
 
-    def supports(self, recipient: str, source_network: Network | str | None = None, destination_chain: Network | str | None = None, **kwargs: Any) -> bool:
+    def supports(
+        self,
+        recipient: str,
+        source_network: Network | str | None = None,
+        destination_chain: Network | str | None = None,
+        **kwargs: Any,
+    ) -> bool:
         """
         Check if recipient is a URL (potentially x402-enabled).
 
@@ -288,6 +335,7 @@ class X402Adapter(ProtocolAdapter):
 
             # Resolve network
             from omniclaw.core.types import Network
+
             if source_network:
                 if isinstance(source_network, Network):
                     agent_network = source_network
@@ -301,7 +349,7 @@ class X402Adapter(ProtocolAdapter):
             seller_network_str = requirements.network.upper().replace("-", "_")
             try:
                 seller_network = Network.from_string(seller_network_str)
-            except Exception as e:
+            except Exception:
                 return PaymentResult(
                     success=False,
                     transaction_id=None,
@@ -322,7 +370,7 @@ class X402Adapter(ProtocolAdapter):
                     f"x402 cross-chain: {agent_network.value} → {seller_network.value}"
                 )
                 from omniclaw.protocols.gateway import GatewayAdapter
-                
+
                 gateway = GatewayAdapter(self._config, self._wallet_service)
                 gateway_result = await gateway.execute(
                     wallet_id=wallet_id,
@@ -410,7 +458,7 @@ class X402Adapter(ProtocolAdapter):
                     response_data = final_response.json()
                 except Exception:
                     response_data = final_response.text
-                
+
                 return PaymentResult(
                     success=True,
                     transaction_id=transfer_tx_id,
@@ -438,7 +486,7 @@ class X402Adapter(ProtocolAdapter):
                     error=f"Rejected: HTTP {final_response.status_code}",
                 )
 
-        except Exception as e:
+        except (httpx.HTTPError, WalletError, InsufficientBalanceError, ValueError, KeyError) as e:
             return PaymentResult(
                 success=False,
                 transaction_id=None,

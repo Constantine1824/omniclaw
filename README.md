@@ -1,8 +1,6 @@
 # OmniClaw
 
-**The payment infrastructure for autonomous AI agents.**
-
-Create agent wallets. Simulate payments. Enforce spending controls. Move USDC safely.
+**OmniClaw is the economic control and trust infrastructure for autonomous agents — enabling them to pay, get paid, and transact securely under real-time policy enforcement.**
 
 OmniClaw is the execution layer for AI-native payments. It sits between raw wallet infrastructure and production payment flows so AI agents and AI-powered apps can move money with better safety, trust, and operator control.
 
@@ -16,11 +14,14 @@ Instead of wiring wallets, payment routing, guardrails, intents, trust checks, a
 - payment intents with reservation handling
 - ERC-8004-style trust-aware checks
 - **nanopayments** — gas-free EIP-3009 USDC transfers via Circle Gateway (seller: `@agent.sell()`, buyer: automatic for micro-amounts)
+- **Multi-facilitator support** — Circle Gateway, Coinbase CDP, OrderN, RBX, Thirdweb integrated
+- **Seller SDK** — accept payments with automatic 402 responses
+- **Trust Gate** — ERC-8004 identity and reputation verification
 
 - Product: `OmniClaw`
 - Company: `Omnuron AI`
 - Official site: `omniclaw.ai`
-- SDK status: `1047` passing SDK tests in `tests/` (nanopayments: `286`)
+- SDK status: `1168` passing SDK tests in `tests/`
 - Python: `>=3.10`
 - Package: `omniclaw`
 

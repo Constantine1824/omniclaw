@@ -462,7 +462,7 @@ class TestPaymentInfo:
             network="eip155:5042002",
             transaction="batch-ref-123",
         )
-        assert info.amount_decimal == "1.0"
+        assert info.amount_decimal == "1"
 
     def test_to_dict(self):
         info = PaymentInfo(
@@ -475,7 +475,7 @@ class TestPaymentInfo:
         d = info.to_dict()
         assert d["verified"] is True
         assert d["payer"] == "0xBuyer123"
-        assert d["amount_decimal"] == "1.0"
+        assert d["amount_decimal"] == "1"
 
 
 class TestDepositResult:

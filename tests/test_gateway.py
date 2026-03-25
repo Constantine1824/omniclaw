@@ -75,7 +75,7 @@ class TestGatewayExecute:
         mock_tx = MagicMock()
         mock_tx.id = "tx-123"
         mock_tx.tx_hash = "0xhash"
-        wallet_service.transfer.return_value = mock_tx
+        wallet_service.transfer = AsyncMock(return_value=mock_tx)
 
         result = await adapter.execute(
             wallet_id="w1",

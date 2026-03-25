@@ -214,6 +214,7 @@ class Config:
             nanopayments_topup_amount=nanopayments_topup_amount,
             nanopayments_micro_threshold=nanopayments_micro_threshold,
             nanopayments_default_key_alias=nanopayments_default_key_alias,
+            nanopayments_default_network=nanopayments_default_network,
         )
 
     def with_updates(self, **updates: Any) -> Config:
@@ -246,6 +247,7 @@ class Config:
             "nanopayments_topup_amount": self.nanopayments_topup_amount,
             "nanopayments_micro_threshold": self.nanopayments_micro_threshold,
             "nanopayments_default_key_alias": self.nanopayments_default_key_alias,
+            "nanopayments_default_network": self.nanopayments_default_network,
         }
         current.update(updates)
         return Config(**current)

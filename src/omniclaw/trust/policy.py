@@ -20,7 +20,6 @@ Checks are evaluated in strict priority order (§4.3 of the spec):
 from __future__ import annotations
 
 from decimal import Decimal
-from typing import Any
 
 from omniclaw.core.logging import get_logger
 from omniclaw.identity.types import (

@@ -29,7 +29,6 @@ from omniclaw.protocols.nanopayments import (
     GATEWAY_API_MAINNET,
     GATEWAY_API_TESTNET,
     GATEWAY_BALANCES_PATH,
-    GATEWAY_INFO_PATH,
     GATEWAY_X402_SETTLE_PATH,
     GATEWAY_X402_SUPPORTED_PATH,
     GATEWAY_X402_VERIFY_PATH,
@@ -41,7 +40,6 @@ from omniclaw.protocols.nanopayments.exceptions import (
     GatewayConnectionError,
     GatewayTimeoutError,
     InsufficientBalanceError,
-    InsufficientGatewayBalanceError,
     InvalidSignatureError,
     NetworkMismatchError,
     NonceReusedError,
@@ -50,7 +48,6 @@ from omniclaw.protocols.nanopayments.exceptions import (
     VerificationError,
 )
 from omniclaw.protocols.nanopayments.types import (
-    EIP3009Authorization,
     GatewayBalance,
     PaymentPayload,
     PaymentRequirements,
@@ -773,7 +770,8 @@ class NanopaymentClient:
             balance_str = bal.get("balance", "0")
             total = _to_int(balance_str)
             available = total  # Gateway balance is fully available
-            formatted_total = f"{total / 1_000_000:.6f} USDC"
+            from decimal import Decimal
+            formatted_total = f"{Decimal(total) / Decimal(1_000_000):.6f} USDC"
             formatted_available = formatted_total
         return GatewayBalance(
             total=total,

@@ -40,7 +40,7 @@ def _mock_web3(address: str, chain_id: int = 5042002):
     }
     # Gas reserve check mocks
     mock_w3.eth.get_balance.return_value = 10**18  # 1 ETH in wei
-    mock_w3.eth.gas_price.return_value = 30_000_000_000  # 30 gwei
+    mock_w3.eth.gas_price = MagicMock(return_value=30_000_000_000)  # 30 gwei
     mock_w3.from_wei = lambda v, unit: v / 1e18 if unit == "ether" else v
     mock_account = MagicMock()
     mock_account.sign_transaction.return_value = MagicMock(raw_transaction=b"\x03" * 32)
@@ -239,7 +239,7 @@ class TestDeposit:
 class TestWithdraw:
     @pytest.mark.asyncio
     async def test_withdraw_same_chain(self):
-        """Same-chain withdrawal."""
+        """Same-chain withdrawal raises NotImplementedError (stubs not implemented)."""
         private_key, _ = generate_eoa_keypair()
         client = _make_client_mock()
         mock_w3 = _mock_web3("")
@@ -253,17 +253,12 @@ class TestWithdraw:
                 rpc_url="https://rpc.example.com",
                 nanopayment_client=client,
             )
-            result = await manager.withdraw("2.50")
-
-        assert result.amount == 2_500_000
-        assert result.formatted_amount == "2.50 USDC"
-        assert result.source_chain == "eip155:5042002"
-        assert result.destination_chain == "eip155:5042002"
-        assert result.recipient is not None
+            with pytest.raises(NotImplementedError):
+                await manager.withdraw("2.50")
 
     @pytest.mark.asyncio
     async def test_withdraw_cross_chain(self):
-        """Cross-chain withdrawal."""
+        """Cross-chain withdrawal raises NotImplementedError (stubs not implemented)."""
         private_key, _ = generate_eoa_keypair()
         client = _make_client_mock()
         mock_w3 = _mock_web3("")
@@ -276,18 +271,16 @@ class TestWithdraw:
                 rpc_url="https://rpc.example.com",
                 nanopayment_client=client,
             )
-            result = await manager.withdraw(
-                "1.00",
-                destination_chain="eip155:1",
-                recipient="0x" + "c" * 40,
-            )
-
-        assert result.destination_chain == "eip155:1"
-        assert result.recipient == "0x" + "c" * 40
+            with pytest.raises(NotImplementedError):
+                await manager.withdraw(
+                    "1.00",
+                    destination_chain="eip155:1",
+                    recipient="0x" + "c" * 40,
+                )
 
     @pytest.mark.asyncio
     async def test_withdraw_same_chain_returns_result(self):
-        """Same-chain withdraw returns a result (API-based, no on-chain transaction)."""
+        """Same-chain withdraw raises NotImplementedError (API stubs not implemented)."""
         private_key, _ = generate_eoa_keypair()
         client = _make_client_mock()
 
@@ -297,14 +290,12 @@ class TestWithdraw:
             rpc_url="https://rpc.example.com",
             nanopayment_client=client,
         )
-        result = await manager.withdraw(
-            "1.00",
-            destination_chain="eip155:5042002",  # Same chain
-            recipient="0x" + "a" * 40,
-        )
-        # Same-chain withdrawal returns a result (API-based)
-        assert result.destination_chain == "eip155:5042002"
-        assert result.recipient == "0x" + "a" * 40
+        with pytest.raises(NotImplementedError):
+            await manager.withdraw(
+                "1.00",
+                destination_chain="eip155:5042002",  # Same chain
+                recipient="0x" + "a" * 40,
+            )
 
 
 # =============================================================================
@@ -377,7 +368,7 @@ class TestGasReserve:
             mock_w3 = _mock_web3("")
             # 1 ETH = enough for ~5 deposits at 0.2M gas * 30 gwei = 0.006 ETH per deposit
             mock_w3.eth.get_balance.return_value = 10**18  # 1 ETH
-            mock_w3.eth.gas_price.return_value = 30_000_000_000  # 30 gwei
+            mock_w3.eth.gas_price = 30_000_000_000  # 30 gwei (direct value)
             mock_w3.from_wei = lambda v, unit: v / 1e18 if unit == "ether" else v
             MockWeb3.return_value = mock_w3
             manager = GatewayWalletManager(
@@ -405,7 +396,7 @@ class TestGasReserve:
             # required = 2 * 0.0072 = 0.0144 ETH
             # balance = 0.001 ETH = 1e15 wei < 1.44e16 wei (required)
             mock_w3.eth.get_balance.return_value = 1_000_000_000_000_000  # 0.001 ETH
-            mock_w3.eth.gas_price.return_value = 30_000_000_000  # 30 gwei
+            mock_w3.eth.gas_price = 30_000_000_000  # 30 gwei (attribute)
             mock_w3.eth.get_transaction_count.return_value = 0
             mock_w3.eth.account = MagicMock()
 
@@ -468,7 +459,7 @@ class TestGasReserve:
             MockWeb3.return_value = mock_w3
             # Very low ETH balance
             mock_w3.eth.get_balance.return_value = 1_000_000_000_000_000  # 0.001 ETH
-            mock_w3.eth.gas_price.return_value = 30_000_000_000  # 30 gwei
+            mock_w3.eth.gas_price = 30_000_000_000  # 30 gwei (attribute)
             mock_w3.eth.get_transaction_count.return_value = 0
             mock_w3.eth.account = MagicMock()
 
@@ -500,7 +491,7 @@ class TestGasReserve:
             MockWeb3.return_value = mock_w3
             # Very low ETH balance
             mock_w3.eth.get_balance.return_value = 1_000_000_000_000_000  # 0.001 ETH
-            mock_w3.eth.gas_price.return_value = 30_000_000_000  # 30 gwei
+            mock_w3.eth.gas_price = 30_000_000_000  # 30 gwei (attribute)
             mock_w3.eth.get_transaction_count.return_value = 0
             mock_w3.eth.send_raw_transaction.return_value = b"\x01" * 32
             mock_w3.eth.wait_for_transaction_receipt.return_value = {
@@ -723,7 +714,7 @@ class TestTransferMethods:
 
     @pytest.mark.asyncio
     async def test_transfer_to_address_same_chain(self):
-        """transfer_to_address() returns WithdrawResult (API-based)."""
+        """transfer_to_address() raises NotImplementedError (not yet implemented)."""
         private_key, _ = generate_eoa_keypair()
         client = _make_client_mock()
 
@@ -737,17 +728,15 @@ class TestTransferMethods:
                 nanopayment_client=client,
             )
 
-            result = await manager.transfer_to_address(
-                "10.00",
-                recipient_address="0x" + "a" * 40,
-            )
-
-            assert result.destination_chain == "eip155:5042002"
-            assert result.recipient == "0x" + "a" * 40
+            with pytest.raises(NotImplementedError):
+                await manager.transfer_to_address(
+                    "10.00",
+                    recipient_address="0x" + "a" * 40,
+                )
 
     @pytest.mark.asyncio
     async def test_transfer_crosschain(self):
-        """transfer_crosschain() returns WithdrawResult."""
+        """transfer_crosschain() raises NotImplementedError (not yet implemented)."""
         private_key, _ = generate_eoa_keypair()
         client = _make_client_mock()
 
@@ -761,15 +750,12 @@ class TestTransferMethods:
                 nanopayment_client=client,
             )
 
-            result = await manager.transfer_crosschain(
-                "5.00",
-                destination_chain="eip155:8453",  # Base
-                recipient_address="0x" + "b" * 40,
-            )
-
-            assert result.destination_chain == "eip155:8453"
-            assert result.recipient == "0x" + "b" * 40
-            assert result.source_chain == "eip155:5042002"
+            with pytest.raises(NotImplementedError):
+                await manager.transfer_crosschain(
+                    "5.00",
+                    destination_chain="eip155:8453",  # Base
+                    recipient_address="0x" + "b" * 40,
+                )
 
     @pytest.mark.asyncio
     async def test_get_onchain_balance(self):

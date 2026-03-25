@@ -23,7 +23,7 @@ except ImportError:
         def decorator(f):
             return f
         return decorator
-    
+
     AsyncRetrying = None
     retry_if_exception = None
     stop_after_attempt = None

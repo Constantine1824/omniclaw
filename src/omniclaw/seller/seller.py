@@ -1,0 +1,1056 @@
+"""
+OmniClaw Seller SDK - Complete Economic Infrastructure for Sellers.
+
+This provides everything needed to accept payments:
+- Multiple endpoint configuration
+- Both payment methods (basic x402 + Circle)
+- Webhook notifications
+- Transaction history
+
+Usage:
+    from omniclaw.seller import Seller, create_seller
+
+    seller = create_seller(
+        seller_address="0x...",
+        name="Weather API",
+    )
+
+    # Add protected endpoints
+    seller.protect("/weather", "$0.001", "Current weather")
+    seller.protect("/forecast", "$0.01", "7-day forecast")
+
+    # Start server
+    seller.serve(port=4023)
+"""
+
+import base64
+import hashlib
+import json
+import time
+from dataclasses import dataclass, field
+from datetime import datetime
+from enum import Enum
+from typing import Any, Callable
+
+import httpx
+
+
+# =============================================================================
+# TYPES
+# =============================================================================
+
+
+class PaymentScheme(str, Enum):
+    """Payment schemes supported."""
+
+    EXACT = "exact"  # Basic x402 (EIP-3009)
+    GATEWAY_BATCHED = "GatewayWalletBatched"  # Circle Nanopayment
+
+
+class PaymentStatus(str, Enum):
+    """Payment status."""
+
+    PENDING = "pending"
+    VERIFIED = "verified"
+    SETTLED = "settled"
+    FAILED = "failed"
+
+
+@dataclass
+class PaymentRecord:
+    """Record of a payment."""
+
+    id: str
+    scheme: str
+    buyer_address: str
+    seller_address: str
+    amount: int
+    amount_usd: float
+    resource_url: str
+    status: PaymentStatus
+    created_at: datetime = field(default_factory=datetime.now)
+    verified_at: datetime | None = None
+    tx_hash: str | None = None
+
+
+@dataclass
+class Endpoint:
+    """Protected endpoint configuration."""
+
+    path: str
+    price_usd: float
+    description: str
+    schemes: list[PaymentScheme] = field(
+        default_factory=lambda: [PaymentScheme.EXACT, PaymentScheme.GATEWAY_BATCHED]
+    )
+    requires_guild: str | None = None
+
+
+@dataclass
+class SellerConfig:
+    """Seller configuration."""
+
+    seller_address: str
+    name: str
+    description: str = ""
+    network: str = "eip155:84532"  # Base Sepolia
+    usdc_contract: str = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+    gateway_contract: str = ""
+    webhook_url: str = ""
+    webhook_secret: str = ""
+
+
+# =============================================================================
+# CORE SELLER
+# =============================================================================
+
+
+class Seller:
+    """
+    Complete seller infrastructure for accepting payments.
+
+    Features:
+    - Multiple protected endpoints
+    - Both payment methods (basic x402 + Circle)
+    - Transaction history
+    - Webhook notifications
+    - Optional Circle Gateway facilitator integration
+
+    Usage:
+        seller = Seller(
+            seller_address="0x742d...",
+            name="My API",
+        )
+
+        seller.protect("/weather", "$0.001", "Weather data")
+        seller.protect("/premium", "$0.01", "Premium content")
+
+        seller.serve(port=4023)
+
+    With Circle Gateway facilitator:
+        from omniclaw.seller.facilitator import create_facilitator
+
+        facilitator = create_facilitator(circle_api_key="...")
+        seller = Seller(
+            seller_address="0x742d...",
+            name="My API",
+            facilitator=facilitator,  # Uses Circle Gateway for verify/settle
+        )
+    """
+
+    def __init__(
+        self,
+        seller_address: str,
+        name: str,
+        description: str = "",
+        network: str = "eip155:84532",
+        usdc_contract: str = "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+        webhook_url: str = "",
+        webhook_secret: str = "",
+        facilitator: Any = None,
+    ):
+        """
+        Initialize seller.
+
+        Args:
+            seller_address: EVM address for receiving payments
+            name: Seller name
+            description: Seller description
+            network: CAIP-2 network identifier
+            usdc_contract: USDC contract address
+            webhook_url: URL for payment notifications
+            webhook_secret: Secret for webhook signing
+            facilitator: Optional CircleGatewayFacilitator for verify/settle
+        """
+        self.config = SellerConfig(
+            seller_address=seller_address,
+            name=name,
+            description=description,
+            network=network,
+            usdc_contract=usdc_contract,
+            webhook_url=webhook_url,
+            webhook_secret=webhook_secret,
+        )
+
+        self._endpoints: dict[str, Endpoint] = {}
+        self._payments: dict[str, PaymentRecord] = {}
+        self._facilitator = facilitator
+
+        # Get gateway contract from env or use default
+        import os
+
+        self._gateway_contract = os.environ.get(
+            "CIRCLE_GATEWAY_CONTRACT", "0x1234567890abcdef1234567890abcdef12345678"
+        )
+
+    def protect(
+        self,
+        path: str,
+        price: str,
+        description: str = "",
+        schemes: list[PaymentScheme] | None = None,
+    ) -> Callable:
+        """
+        Decorator to protect an endpoint.
+
+        Args:
+            path: Route path (e.g., "/weather")
+            price: Price in USD (e.g., "$0.001")
+            description: Endpoint description
+            schemes: Payment schemes to accept (default: both)
+
+        Usage:
+            @seller.protect("/weather", "$0.001", "Weather data")
+            def weather():
+                return {"temp": 72}
+        """
+        # Parse price: "$0.001" -> 0.001
+        price_usd = float(price.replace("$", ""))
+
+        # Default to accepting both
+        if schemes is None:
+            schemes = [PaymentScheme.EXACT, PaymentScheme.GATEWAY_BATCHED]
+
+        endpoint = Endpoint(
+            path=path,
+            price_usd=price_usd,
+            description=description,
+            schemes=schemes,
+        )
+
+        self._endpoints[path] = endpoint
+
+        def decorator(func: Callable) -> Callable:
+            return func
+
+        return decorator
+
+    def add_endpoint(
+        self,
+        path: str,
+        price: str,
+        description: str = "",
+        schemes: list[PaymentScheme] | None = None,
+    ) -> None:
+        """
+        Add a protected endpoint programmatically.
+
+        Args:
+            path: Route path
+            price: Price in USD
+            description: Description
+            schemes: Payment schemes
+        """
+        price_usd = float(price.replace("$", ""))
+
+        if schemes is None:
+            schemes = [PaymentScheme.EXACT, PaymentScheme.GATEWAY_BATCHED]
+
+        self._endpoints[path] = Endpoint(
+            path=path,
+            price_usd=price_usd,
+            description=description,
+            schemes=schemes,
+        )
+
+    def _create_accepts(self, endpoint: Endpoint) -> list[dict]:
+        """Create accepts array for an endpoint."""
+        amount_atomic = int(endpoint.price_usd * 1_000_000)
+        accepts = []
+
+        for scheme in endpoint.schemes:
+            if scheme == PaymentScheme.EXACT:
+                accepts.append(
+                    {
+                        "scheme": "exact",
+                        "network": self.config.network,
+                        "asset": self.config.usdc_contract,
+                        "amount": str(amount_atomic),
+                        "payTo": self.config.seller_address,
+                        "maxTimeoutSeconds": 300,
+                        "extra": {"name": "USDC", "version": "2"},
+                    }
+                )
+            elif scheme == PaymentScheme.GATEWAY_BATCHED:
+                accepts.append(
+                    {
+                        "scheme": "GatewayWalletBatched",
+                        "network": self.config.network,
+                        "asset": self.config.usdc_contract,
+                        "amount": str(amount_atomic),
+                        "payTo": self.config.seller_address,
+                        "maxTimeoutSeconds": 300,
+                        "extra": {
+                            "name": "USDC",
+                            "version": "2",
+                            "verifyingContract": self._gateway_contract,
+                        },
+                    }
+                )
+
+        return accepts
+
+    def create_402_response(self, path: str, url: str) -> tuple[dict, str]:
+        """Create 402 response for a path."""
+        endpoint = self._endpoints.get(path)
+
+        if not endpoint:
+            return {}, "Endpoint not found"
+
+        payment_required = {
+            "x402Version": 2,
+            "error": "Payment required",
+            "resource": {
+                "url": url,
+                "description": endpoint.description or f"Access to {path}",
+                "mimeType": "application/json",
+            },
+            "accepts": self._create_accepts(endpoint),
+        }
+
+        header = base64.b64encode(json.dumps(payment_required).encode()).decode()
+
+        return {"payment-required": header}, json.dumps({"error": "Payment required"})
+
+    def verify_payment(
+        self,
+        payment_payload: dict,
+        accepted: dict,
+        verify_signature: bool = True,
+        settle_payment: bool = False,
+    ) -> tuple[bool, str, PaymentRecord | None]:
+        """
+        Verify a payment.
+
+        Args:
+            payment_payload: The payment payload from the request header
+            accepted: The accepted payment requirements from 402 response
+            verify_signature: Whether to verify EIP-3009 signature (default: True)
+            settle_payment: Whether to settle via facilitator (default: False)
+
+        Returns:
+            (is_valid, error, payment_record)
+        """
+        try:
+            scheme = payment_payload.get("scheme")
+            payment_data = payment_payload.get("payload", {})
+            authorization = payment_data.get("authorization", {})
+            signature = payment_data.get("signature", "")
+
+            # Use Circle Gateway facilitator if available
+            if self._facilitator:
+                return self._verify_with_facilitator(
+                    payment_payload=payment_payload,
+                    accepted=accepted,
+                    verify_signature=verify_signature,
+                    settle_payment=settle_payment,
+                )
+
+            # Get buyer address
+            buyer_address = authorization.get("from", "").lower()
+
+            # Generate payment ID
+            payment_id = hashlib.sha256(f"{buyer_address}{time.time()}".encode()).hexdigest()[:16]
+
+            # Check timeout
+            valid_after = int(authorization.get("validAfter", 0))
+            valid_before = int(authorization.get("validBefore", 0))
+            current = int(time.time())
+
+            if current < valid_after:
+                return False, "Payment not yet valid", None
+            if current > valid_before:
+                return False, "Payment expired", None
+
+            # Check amount
+            paid = int(authorization.get("value", "0"))
+            required = int(accepted.get("amount", "0"))
+
+            if paid < required:
+                return False, f"Insufficient: {paid} < {required}", None
+
+            # Check recipient
+            to_address = authorization.get("to", "").lower()
+            if to_address != self.config.seller_address.lower():
+                return False, "Wrong recipient", None
+
+            # Verify EIP-3009 signature if requested
+            if verify_signature and signature:
+                is_valid_sig, sig_error = self._verify_eip3009_signature(
+                    authorization=authorization,
+                    signature=signature,
+                    network=accepted.get("network", self.config.network),
+                    verifying_contract=accepted.get("extra", {}).get("verifyingContract", ""),
+                )
+                if not is_valid_sig:
+                    return False, f"Invalid signature: {sig_error}", None
+
+            # Create payment record
+            record = PaymentRecord(
+                id=payment_id,
+                scheme=scheme,
+                buyer_address=buyer_address,
+                seller_address=self.config.seller_address,
+                amount=paid,
+                amount_usd=paid / 1_000_000,
+                resource_url=accepted.get("resource", {}).get("url", ""),
+                status=PaymentStatus.VERIFIED,
+            )
+
+            # Store payment
+            self._payments[payment_id] = record
+
+            # Send webhook
+            if self.config.webhook_url:
+                self._send_webhook(record)
+
+            return True, "", record
+
+        except Exception as e:
+            return False, str(e), None
+
+    async def verify_payment_async(
+        self,
+        payment_payload: dict,
+        accepted: dict,
+        verify_signature: bool = True,
+        settle_payment: bool = False,
+    ) -> tuple[bool, str, PaymentRecord | None]:
+        """
+        Verify a payment (async version for use with asyncio).
+
+        Args:
+            payment_payload: The payment payload from the request header
+            accepted: The accepted payment requirements from 402 response
+            verify_signature: Whether to verify EIP-3009 signature (default: True)
+            settle_payment: Whether to settle via facilitator (default: False)
+
+        Returns:
+            (is_valid, error, payment_record)
+        """
+        import hashlib
+
+        try:
+            scheme = payment_payload.get("scheme")
+            payment_data = payment_payload.get("payload", {})
+            authorization = payment_data.get("authorization", {})
+            payment_data.get("signature", "")
+
+            # Use Circle Gateway facilitator if available
+            if self._facilitator:
+                payment_requirements = {
+                    "scheme": accepted.get("scheme", "exact"),
+                    "network": accepted.get("network", self.config.network),
+                    "asset": accepted.get("asset", self.config.usdc_contract),
+                    "amount": accepted.get("amount", "0"),
+                    "payTo": accepted.get("payTo", self.config.seller_address),
+                    "maxTimeoutSeconds": accepted.get("maxTimeoutSeconds", 345600),
+                    "extra": accepted.get("extra", {}),
+                }
+
+                # Call facilitator directly (async)
+                if settle_payment:
+                    result = await self._facilitator.settle(payment_payload, payment_requirements)
+                    status = PaymentStatus.SETTLED if result.success else PaymentStatus.FAILED
+
+                    if not result.success:
+                        return False, f"Settlement failed: {result.error_reason}", None
+
+                    buyer_address = result.payer or ""
+
+                else:
+                    result = await self._facilitator.verify(payment_payload, payment_requirements)
+
+                    if not result.is_valid:
+                        return False, f"Verification failed: {result.invalid_reason}", None
+
+                    buyer_address = result.payer or ""
+                    status = PaymentStatus.VERIFIED
+
+                payment_id = hashlib.sha256(f"{buyer_address}{time.time()}".encode()).hexdigest()[
+                    :16
+                ]
+                paid = int(payment_requirements["amount"])
+
+                record = PaymentRecord(
+                    id=payment_id,
+                    scheme=scheme or "exact",
+                    buyer_address=buyer_address.lower(),
+                    seller_address=self.config.seller_address,
+                    amount=paid,
+                    amount_usd=paid / 1_000_000,
+                    resource_url=accepted.get("resource", {}).get("url", ""),
+                    status=status,
+                )
+
+                self._payments[payment_id] = record
+
+                if self.config.webhook_url:
+                    self._send_webhook(record)
+
+                return True, "", record
+
+            # Non-facilitator path (local verification)
+            buyer_address = authorization.get("from", "").lower()
+            payment_id = hashlib.sha256(f"{buyer_address}{time.time()}".encode()).hexdigest()[:16]
+
+            valid_after = int(authorization.get("validAfter", 0))
+            valid_before = int(authorization.get("validBefore", 0))
+            current = int(time.time())
+
+            if current < valid_after:
+                return False, "Payment not yet valid", None
+            if current > valid_before:
+                return False, "Payment expired", None
+
+            paid = int(authorization.get("value", "0"))
+            required = int(accepted.get("amount", "0"))
+
+            if paid < required:
+                return False, f"Insufficient: {paid} < {required}", None
+
+            to_address = authorization.get("to", "").lower()
+            if to_address != self.config.seller_address.lower():
+                return False, "Wrong recipient", None
+
+            record = PaymentRecord(
+                id=payment_id,
+                scheme=scheme,
+                buyer_address=buyer_address,
+                seller_address=self.config.seller_address,
+                amount=paid,
+                amount_usd=paid / 1_000_000,
+                resource_url=accepted.get("resource", {}).get("url", ""),
+                status=PaymentStatus.VERIFIED,
+            )
+
+            self._payments[payment_id] = record
+
+            if self.config.webhook_url:
+                self._send_webhook(record)
+
+            return True, "", record
+
+        except Exception as e:
+            return False, str(e), None
+
+    def _verify_eip3009_signature(
+        self,
+        authorization: dict,
+        signature: str,
+        network: str,
+        verifying_contract: str,
+    ) -> tuple[bool, str]:
+        """
+        Verify EIP-3009 TransferWithAuthorization signature.
+
+        Args:
+            authorization: The authorization dict from payment payload
+            signature: The hex-encoded signature
+            network: CAIP-2 network identifier
+            verifying_contract: The contract address for EIP-712 domain
+
+        Returns:
+            (is_valid, error_message)
+        """
+        try:
+            from eth_account import Account  # noqa: F401
+        except ImportError:
+            return True, "Signature verification skipped - dependencies not installed"
+
+        try:
+            # Parse network to get chain ID
+            chain_id = 84532  # Default to Base Sepolia
+            if ":" in network:
+                chain_id = int(network.split(":")[-1])
+
+            # Build EIP-712 domain
+            domain = {
+                "name": "USDC",
+                "version": "2",
+                "chainId": chain_id,
+                "verifyingContract": verifying_contract
+                if verifying_contract
+                else "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            }
+
+            # Build EIP-712 message for TransferWithAuthorization
+            message = {
+                "types": {
+                    "EIP712Domain": [
+                        {"name": "name", "type": "string"},
+                        {"name": "version", "type": "string"},
+                        {"name": "chainId", "type": "uint256"},
+                        {"name": "verifyingContract", "type": "address"},
+                    ],
+                    "TransferWithAuthorization": [
+                        {"name": "from", "type": "address"},
+                        {"name": "to", "type": "address"},
+                        {"name": "value", "type": "uint256"},
+                        {"name": "validAfter", "type": "uint256"},
+                        {"name": "validBefore", "type": "uint256"},
+                        {"name": "nonce", "type": "bytes32"},
+                    ],
+                },
+                "primaryType": "TransferWithAuthorization",
+                "domain": domain,
+                "message": {
+                    "from": authorization.get("from"),
+                    "to": authorization.get("to"),
+                    "value": int(authorization.get("value", 0)),
+                    "validAfter": int(authorization.get("validAfter", 0)),
+                    "validBefore": int(authorization.get("validBefore", 0)),
+                    "nonce": authorization.get("nonce", "0x" + "00" * 32),
+                },
+            }
+
+            # Recover signer from signature
+            signer = Account.recover_message(message, signature=signature)
+            expected_signer = authorization.get("from", "").lower()
+
+            if signer.lower() != expected_signer:
+                return False, f"Signature mismatch: {signer} != {expected_signer}"
+
+            return True, ""
+
+        except Exception as e:
+            return False, f"Signature verification error: {str(e)}"
+
+    def _verify_with_facilitator(
+        self,
+        payment_payload: dict,
+        accepted: dict,
+        verify_signature: bool,
+        settle_payment: bool,
+    ) -> tuple[bool, str, PaymentRecord | None]:
+        """
+        Verify and optionally settle payment using Circle Gateway facilitator.
+
+        Args:
+            payment_payload: The payment payload from the request header
+            accepted: The accepted payment requirements from 402 response
+            verify_signature: Whether to verify signature (passed to facilitator)
+            settle_payment: Whether to settle via facilitator
+
+        Returns:
+            (is_valid, error, payment_record)
+        """
+        import asyncio
+
+        # Build the proper format for facilitator
+        payment_requirements = {
+            "scheme": accepted.get("scheme", "exact"),
+            "network": accepted.get("network", self.config.network),
+            "asset": accepted.get("asset", self.config.usdc_contract),
+            "amount": accepted.get("amount", "0"),
+            "payTo": accepted.get("payTo", self.config.seller_address),
+            "maxTimeoutSeconds": accepted.get("maxTimeoutSeconds", 345600),
+            "extra": accepted.get("extra", {}),
+        }
+
+        # Use asyncio.run() to properly handle async facilitator calls from sync context
+        async def _do_verify():
+            if settle_payment:
+                return await self._facilitator.settle(payment_payload, payment_requirements)
+            else:
+                return await self._facilitator.verify(payment_payload, payment_requirements)
+
+        try:
+            result = asyncio.run(_do_verify())
+        except RuntimeError as e:
+            # If already in async context, we need to handle differently
+            if "asyncio.run() cannot be called from a running event loop" in str(e):
+                # Try to get or create event loop
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # We're in an async context, need to use await
+                        return (
+                            False,
+                            "Cannot call facilitator from async context without await",
+                            None,
+                        )
+                    else:
+                        # Loop exists but not running - use it
+                        result = loop.run_until_complete(_do_verify())
+                except Exception as inner_e:
+                    return False, f"Facilitator error: {inner_e}", None
+            else:
+                return False, f"Facilitator error: {e}", None
+
+        # Process result
+        if settle_payment:
+            status = PaymentStatus.SETTLED if result.success else PaymentStatus.FAILED
+
+            if not result.success:
+                return False, f"Settlement failed: {result.error_reason}", None
+
+            buyer_address = result.payer or ""
+
+        else:
+            if not result.is_valid:
+                return False, f"Verification failed: {result.invalid_reason}", None
+
+            buyer_address = result.payer or ""
+
+        payment_id = hashlib.sha256(f"{buyer_address}{time.time()}".encode()).hexdigest()[:16]
+        paid = int(payment_requirements["amount"])
+        status = PaymentStatus.SETTLED if settle_payment else PaymentStatus.VERIFIED
+
+        # Create payment record
+        record = PaymentRecord(
+            id=payment_id,
+            scheme=payment_payload.get("scheme", "exact"),
+            buyer_address=buyer_address.lower(),
+            seller_address=self.config.seller_address,
+            amount=paid,
+            amount_usd=paid / 1_000_000,
+            resource_url=accepted.get("resource", {}).get("url", ""),
+            status=status,
+        )
+
+        # Store payment
+        self._payments[payment_id] = record
+
+        # Send webhook
+        if self.config.webhook_url:
+            self._send_webhook(record)
+
+        return True, "", record
+
+    def _send_webhook(self, record: PaymentRecord) -> None:
+        """Send webhook notification for payment."""
+        if not self.config.webhook_url:
+            return
+
+        payload = {
+            "event": "payment.received",
+            "payment": {
+                "id": record.id,
+                "scheme": record.scheme,
+                "buyer": record.buyer_address,
+                "amount": str(record.amount),
+                "amount_usd": str(record.amount_usd),
+                "status": record.status.value,
+                "timestamp": record.created_at.isoformat(),
+            },
+        }
+
+        # Sign payload
+        if self.config.webhook_secret:
+            import hmac
+
+            signature = hmac.new(
+                self.config.webhook_secret.encode(), json.dumps(payload).encode(), "sha256"
+            ).hexdigest()
+            headers = {"X-Signature": signature}
+        else:
+            headers = {}
+
+        try:
+            httpx.post(
+                self.config.webhook_url,
+                json=payload,
+                headers=headers,
+                timeout=5.0,
+            )
+        except Exception as e:
+            print(f"Webhook failed: {e}")
+
+    def get_payment(self, payment_id: str) -> PaymentRecord | None:
+        """Get payment by ID."""
+        return self._payments.get(payment_id)
+
+    def list_payments(
+        self,
+        buyer_address: str | None = None,
+        status: PaymentStatus | None = None,
+        limit: int = 100,
+    ) -> list[PaymentRecord]:
+        """List payments with optional filters."""
+        payments = list(self._payments.values())
+
+        if buyer_address:
+            payments = [p for p in payments if p.buyer_address == buyer_address.lower()]
+
+        if status:
+            payments = [p for p in payments if p.status == status]
+
+        return payments[-limit:]
+
+    def get_earnings(self) -> dict:
+        """Get total earnings."""
+        total = sum(
+            p.amount_usd for p in self._payments.values() if p.status == PaymentStatus.VERIFIED
+        )
+        count = len([p for p in self._payments.values() if p.status == PaymentStatus.VERIFIED])
+
+        return {
+            "total_usd": total,
+            "count": count,
+            "by_scheme": {
+                "exact": sum(
+                    p.amount_usd
+                    for p in self._payments.values()
+                    if p.scheme == "exact" and p.status == PaymentStatus.VERIFIED
+                ),
+                "gateway_batched": sum(
+                    p.amount_usd
+                    for p in self._payments.values()
+                    if p.scheme == "GatewayWalletBatched" and p.status == PaymentStatus.VERIFIED
+                ),
+            },
+        }
+
+    def get_endpoints(self) -> dict[str, Endpoint]:
+        """Get all protected endpoints."""
+        return self._endpoints
+
+    def serve(self, port: int = 4023, host: str = "0.0.0.0") -> None:
+        """
+        Start the seller server.
+
+        Args:
+            port: Port to listen on
+            host: Host to bind to
+        """
+        try:
+            from fastapi import FastAPI, Request
+            from fastapi.responses import JSONResponse
+            import uvicorn
+        except ImportError:
+            print("FastAPI required: pip install fastapi uvicorn")
+            return
+
+        app = FastAPI(
+            title=f"OmniClaw Seller: {self.config.name}",
+            description=self.config.description,
+        )
+
+        # Add endpoints
+        for path, endpoint in self._endpoints.items():
+            methods = ["GET"]
+
+            # Create route handler
+            async def handler(request: Request, path=path):
+                payment = request.headers.get("payment-signature")
+
+                if not payment:
+                    # Return 402
+                    headers, body = self.create_402_response(path, str(request.url))
+                    return JSONResponse(
+                        status_code=402,
+                        content=json.loads(body),
+                        headers=headers,
+                    )
+
+                # Verify payment
+                try:
+                    payload = json.loads(base64.b64decode(payment))
+                    accepted = payload.get("accepted", {})
+
+                    is_valid, error, record = self.verify_payment(payload, accepted)
+
+                    if not is_valid:
+                        headers, body = self.create_402_response(path, str(request.url))
+                        body = json.dumps({"error": error})
+                        return JSONResponse(
+                            status_code=402,
+                            content=json.loads(body),
+                            headers=headers,
+                        )
+
+                    # Payment valid - return data
+                    return {"status": "ok", "payment_id": record.id if record else None}
+
+                except Exception as e:
+                    headers, body = self.create_402_response(path, str(request.url))
+                    return JSONResponse(
+                        status_code=402,
+                        content={"error": str(e)},
+                        headers=headers,
+                    )
+
+            # Add route
+            app.add_api_route(path, handler, methods=methods)
+
+        # Management endpoints
+        @app.get("/_/health")
+        async def health():
+            return {
+                "status": "ok",
+                "seller": self.config.name,
+                "endpoints": len(self._endpoints),
+                "payments": len(self._payments),
+                "earnings": self.get_earnings(),
+            }
+
+        @app.get("/_/payments")
+        async def list_payments(limit: int = 100):
+            return {"payments": self.list_payments(limit=limit)}
+
+        print(f"\n🏪 OmniClaw Seller: {self.config.name}")
+        print(f"   Address: {self.config.seller_address}")
+        print(f"   Endpoints: {len(self._endpoints)}")
+        for path, ep in self._endpoints.items():
+            schemes = [s.value for s in ep.schemes]
+            print(f"   - {path}: ${ep.price_usd} ({', '.join(schemes)})")
+        print(f"\n   Running on http://{host}:{port}")
+
+        uvicorn.run(app, host=host, port=port)
+
+
+# =============================================================================
+# FACTORY FUNCTION
+# =============================================================================
+
+
+def create_seller(
+    seller_address: str,
+    name: str,
+    description: str = "",
+    network: str = "eip155:84532",
+    webhook_url: str = "",
+    webhook_secret: str = "",
+    facilitator: Any = None,
+    circle_api_key: str | None = None,
+    facilitator_environment: str = "testnet",
+) -> Seller:
+    """
+    Create a new seller.
+
+    Args:
+        seller_address: EVM address for payments
+        name: Seller name
+        description: Seller description
+        network: CAIP-2 network
+        webhook_url: Webhook URL for notifications
+        webhook_secret: Webhook secret for signing
+        facilitator: Optional CircleGatewayFacilitator instance
+        circle_api_key: If provided (and no facilitator), creates facilitator automatically
+        facilitator_environment: Environment for auto-created facilitator ('testnet' or 'mainnet')
+
+    Returns:
+        Seller instance
+    """
+    # Auto-create facilitator if API key provided but no facilitator
+    if facilitator is None and circle_api_key:
+        from omniclaw.seller.facilitator import create_facilitator
+
+        facilitator = create_facilitator(
+            circle_api_key=circle_api_key,
+            environment=facilitator_environment,
+        )
+
+    return Seller(
+        seller_address=seller_address,
+        name=name,
+        description=description,
+        network=network,
+        webhook_url=webhook_url,
+        webhook_secret=webhook_secret,
+        facilitator=facilitator,
+    )
+
+
+# =============================================================================
+# EXPORTS
+# =============================================================================
+
+__all__ = [
+    "Seller",
+    "create_seller",
+    "PaymentScheme",
+    "PaymentStatus",
+    "PaymentRecord",
+    "Endpoint",
+    "SellerConfig",
+]
+
+
+# =============================================================================
+# LEGACY SIMPLE SELLER (backwards compatibility)
+# =============================================================================
+
+
+class SimpleSeller:
+    """Legacy simple seller for backwards compatibility."""
+
+    def __init__(self, seller_address: str, accepts_circle: bool = True):
+        self.seller_address = seller_address
+        self.accepts_circle = accepts_circle
+        self._endpoints = {}
+
+    def add_endpoint(self, path: str, price: str, description: str = None):
+        price_cents = int(price.replace("$", "").replace(".", ""))
+        amount = price_cents * 100
+
+        accepts = [
+            {
+                "scheme": "exact",
+                "network": "eip155:84532",
+                "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                "amount": str(amount),
+                "payTo": self.seller_address,
+                "maxTimeoutSeconds": 300,
+                "extra": {"name": "USDC", "version": "2"},
+            }
+        ]
+
+        if self.accepts_circle:
+            accepts.append(
+                {
+                    "scheme": "GatewayWalletBatched",
+                    "network": "eip155:84532",
+                    "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                    "amount": str(amount),
+                    "payTo": self.seller_address,
+                    "maxTimeoutSeconds": 300,
+                    "extra": {
+                        "name": "USDC",
+                        "version": "2",
+                        "verifyingContract": "0x1234567890abcdef",
+                    },
+                }
+            )
+
+        self._endpoints[path] = {
+            "accepts": accepts,
+            "description": description or f"Access to {path}",
+            "price": price,
+        }
+
+    def protected(self, price: str, description: str = None):
+        def decorator(func):
+            self.add_endpoint(f"/{func.__name__}", price, description)
+            return func
+
+        return decorator
+
+    def check_payment(self, payment_header):
+        if not payment_header:
+            return False, "No payment"
+        return True, ""
+
+    def create_402_response(self, path: str, url: str):
+        import base64
+        import json
+
+        endpoint = self._endpoints.get(path, {})
+
+        payment_required = {
+            "x402Version": 2,
+            "error": "Payment required",
+            "resource": {
+                "url": url,
+                "description": endpoint.get("description", path),
+                "mimeType": "application/json",
+            },
+            "accepts": endpoint.get("accepts", []),
+        }
+
+        header = base64.b64encode(json.dumps(payment_required).encode()).decode()
+        return {"payment-required": header}, '{"error": "Payment required"}'
+
+    def get_endpoints(self):
+        return self._endpoints

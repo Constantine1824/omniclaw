@@ -150,7 +150,7 @@ CIRCLE_DOMAIN_TO_CAIP2: dict[int, str] = {
     5: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",  # Solana mainnet
     6: "eip155:8453",  # Base mainnet
     7: "eip155:137",  # Polygon PoS
-    10: "eip155:1",  # Unichain (same as Ethereum for now)
+    10: "eip155:130",  # Unichain mainnet
     13: "eip155:146",  # Sonic (formerly Fantom)
     14: "eip155:480",  # World Chain
     16: "eip155:32",  # Sei

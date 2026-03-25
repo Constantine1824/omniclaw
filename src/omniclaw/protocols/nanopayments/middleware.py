@@ -477,7 +477,7 @@ class GatewayMiddleware:
         in your response. Use build_payment_response_header() or payment_response_headers()
         to get the header value.
         """
-        from fastapi import Depends, HTTPException, Request
+        from fastapi import HTTPException, Request
 
         async def dependency(request: Request) -> PaymentInfo:
             headers = dict(request.headers)

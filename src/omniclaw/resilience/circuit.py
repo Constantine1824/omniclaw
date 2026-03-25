@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import time
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 from omniclaw.events import event_emitter
 
 from omniclaw.core.logging import get_logger
@@ -188,7 +188,10 @@ class CircuitBreaker:
         if exc_type is None:
             await self.record_success()
         else:
-            # All exceptions within the circuit context are treated as infrastructure failures.
-            # Business logic errors (e.g. validation) should be caught outside the circuit block.
-            await self.record_failure()
+            # Only count infrastructure errors as circuit breaker failures.
+            # Business logic errors (OmniClawError subclasses) should not trip the breaker.
+            from omniclaw.core.exceptions import OmniClawError
+
+            if not issubclass(exc_type, OmniClawError):
+                await self.record_failure()
             return False  # Propagate exception
