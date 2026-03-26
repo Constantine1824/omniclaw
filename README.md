@@ -28,13 +28,13 @@ Instead of wiring wallets, payment routing, guardrails, intents, trust checks, a
 - Product: `OmniClaw`
 - Company: `Omnuron AI`
 - Official site: `omniclaw.ai`
-- SDK status: `1168` passing SDK tests in `tests/`
+- SDK status: `1220` passing SDK tests in `tests/`
 - Python: `>=3.10`
 - Package: `omniclaw`
 
 ![OmniClaw architecture overview](docs/architecture_overview.svg)
 
-*OmniClaw sits between AI applications and wallet/payment infrastructure, adding simulation, routing, guardrails, intents, trust checks, and operational visibility.*
+*OmniClaw sits between AI applications and wallet/payment infrastructure, adding simulation, routing, guardrails, intents, trust checks, settlement controls, and webhook security.*
 
 ## Why OmniClaw
 
@@ -98,6 +98,7 @@ Core workflow: verify setup, create a wallet, simulate the payment, then execute
 - Optionally run ERC-8004 trust verification when an RPC URL is configured
 - **Receive nanopayments** as a seller via `@client.sell()` FastAPI decorator (EIP-3009 gas-free)
 - **Send nanopayments** as a buyer — micro-amounts automatically use Circle Gateway nanopayments
+- Verify webhook signatures and persist webhook deduplication (`notificationId`) for idempotent processing
 
 ## Built For Production
 
@@ -177,11 +178,40 @@ OMNICLAW_LOG_LEVEL=INFO
 OMNICLAW_RPC_URL=https://your-rpc-provider
 ```
 
+Production hardening settings (required when `OMNICLAW_ENV=production` or `mainnet`):
+
+```env
+OMNICLAW_ENV=production
+OMNICLAW_STRICT_SETTLEMENT=true
+OMNICLAW_SELLER_NONCE_REDIS_URL=redis://localhost:6379/1
+OMNICLAW_WEBHOOK_VERIFICATION_KEY=your_public_key
+OMNICLAW_WEBHOOK_DEDUP_DB_PATH=/var/lib/omniclaw/webhook_dedup.sqlite3
+```
+
 Notes:
 
 - `OMNICLAW_REDIS_URL` is the only Redis URL env used by the SDK.
 - Trust verification is optional by default.
 - If you explicitly request trust verification with `check_trust=True`, `OMNICLAW_RPC_URL` must be set to a real RPC endpoint.
+- Webhook deduplication is persistent by `notificationId` when `OMNICLAW_WEBHOOK_DEDUP_DB_PATH` is set.
+
+## Production Canary
+
+Run a payment canary before and after deploys:
+
+```bash
+python scripts/payment_canary.py \
+  --wallet-id <wallet_id> \
+  --recipient <recipient> \
+  --amount 0.10 \
+  --network ARC-TESTNET \
+  --sla-seconds 300
+```
+
+Expected behavior:
+
+- returns exit code `0` on final success within SLA
+- returns non-zero on terminal failure or SLA breach
 
 ## Entity Secret and Recovery
 
@@ -295,6 +325,7 @@ Routing behavior:
 - blockchain address -> direct transfer
 - URL -> x402 flow
 - `destination_chain` set -> cross-chain gateway flow
+- micro payments can route to nanopayments (Circle Gateway batched EIP-3009)
 
 ### 3. Simulation
 
@@ -365,11 +396,11 @@ Behavior:
 
 Start here:
 
-- [Docs Index](docs/README.md)
+- [Architecture and Features](docs/FEATURES.md)
 - [SDK Usage Guide](docs/SDK_USAGE_GUIDE.md)
 - [API Reference](docs/API_REFERENCE.md)
-- [Architecture and Features](docs/FEATURES.md)
 - [Cross-Chain Usage](docs/CCTP_USAGE.md)
+- [Production Hardening](docs/PRODUCTION_HARDENING.md)
 - [ERC-8004 Spec Notes](docs/erc_804_spec.md)
 - [Roadmap](ROADMAP.md)
 
@@ -395,5 +426,5 @@ src/omniclaw/         SDK source
 tests/                SDK test suite
 docs/                 User and developer documentation
 examples/             Example integrations
-mcp-server/           Optional MCP server, not required for SDK usage
+mcp_server/           Optional MCP server, not required for SDK usage
 ```

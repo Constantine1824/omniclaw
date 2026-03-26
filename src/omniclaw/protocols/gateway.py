@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import math
 import re
 from decimal import Decimal
@@ -10,7 +11,9 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from omniclaw.core.idempotency import derive_idempotency_key
 from omniclaw.core.logging import get_logger
+from omniclaw.core.state_machine import is_irreversible_success_status
 from omniclaw.core.types import (
     FeeLevel,
     Network,
@@ -19,6 +22,7 @@ from omniclaw.core.types import (
     PaymentStatus,
     TransactionState,
 )
+from omniclaw.core.gateway_client import usdc_to_units
 from omniclaw.protocols.base import ProtocolAdapter
 
 if TYPE_CHECKING:
@@ -49,7 +53,9 @@ class GatewayAdapter(ProtocolAdapter):
 
     def supports(self, recipient: str, source_network: Network | str | None = None, destination_chain: Network | str | None = None, **kwargs: Any) -> bool:
         """Check if this is a valid cross-chain transfer request."""
-        return destination_chain is not None
+        if destination_chain is None:
+            return False
+        return bool(re.fullmatch(r"0x[a-fA-F0-9]{40}", recipient))
 
     async def execute(
         self,
@@ -68,6 +74,17 @@ class GatewayAdapter(ProtocolAdapter):
         """Execute a cross-chain transfer."""
 
         source_network = source_network or self._config.network
+        strict_settlement = bool(getattr(self._config, "payment_strict_settlement", True))
+        canonical_idempotency_key = idempotency_key or derive_idempotency_key(
+            "gateway",
+            wallet_id,
+            recipient,
+            str(amount),
+            purpose,
+            source_network.value if hasattr(source_network, "value") else source_network,
+            destination_chain.value if hasattr(destination_chain, "value") else destination_chain,
+            kwargs.get("use_fast_transfer", True),
+        )
 
         use_fast_transfer = kwargs.get("use_fast_transfer", True)
 
@@ -112,7 +129,7 @@ class GatewayAdapter(ProtocolAdapter):
                     amount=amount,
                     fee_level=fee_level,
                     wait_for_completion=wait_for_completion,
-                    idempotency_key=idempotency_key,
+                    idempotency_key=canonical_idempotency_key,
                     timeout_seconds=timeout_seconds,
                 )
 
@@ -138,21 +155,35 @@ class GatewayAdapter(ProtocolAdapter):
                         error=transfer_result.error or "Same-chain transfer failed",
                     )
 
-                tx_status = PaymentStatus.PENDING
+                tx_status = (
+                    PaymentStatus.PENDING_SETTLEMENT if strict_settlement else PaymentStatus.PENDING
+                )
                 if transfer_result.transaction:
                     if transfer_result.transaction.state == TransactionState.COMPLETE:
-                        tx_status = PaymentStatus.COMPLETED
+                        tx_status = (
+                            PaymentStatus.SETTLED if strict_settlement else PaymentStatus.COMPLETED
+                        )
                     elif transfer_result.transaction.state in (
                         TransactionState.FAILED,
                         TransactionState.CANCELLED,
                     ):
-                        tx_status = PaymentStatus.FAILED
+                        tx_status = (
+                            PaymentStatus.FAILED_FINAL if strict_settlement else PaymentStatus.FAILED
+                        )
                     elif wait_for_completion:
-                        tx_status = PaymentStatus.PROCESSING
+                        tx_status = (
+                            PaymentStatus.PENDING_SETTLEMENT
+                            if strict_settlement
+                            else PaymentStatus.PROCESSING
+                        )
 
                 tx_id = transfer_result.transaction.id if transfer_result.transaction else None
                 return PaymentResult(
-                    success=True,
+                    success=(
+                        is_irreversible_success_status(tx_status)
+                        if strict_settlement
+                        else tx_status != PaymentStatus.FAILED
+                    ),
                     transaction_id=tx_id,
                     blockchain_tx=transfer_result.tx_hash,
                     amount=amount,
@@ -165,6 +196,7 @@ class GatewayAdapter(ProtocolAdapter):
                         "destination_address": destination_address,
                         "purpose": purpose,
                         "same_chain": True,
+                        "idempotency_key": canonical_idempotency_key,
                     },
                 )
             except Exception as e:
@@ -195,6 +227,8 @@ class GatewayAdapter(ProtocolAdapter):
                     fee_level=fee_level,
                     wait_for_completion=wait_for_completion,
                     use_fast_transfer=use_fast_transfer,
+                    idempotency_key=canonical_idempotency_key,
+                    strict_settlement=strict_settlement,
                 )
                 return result
             except Exception as e:
@@ -226,6 +260,8 @@ class GatewayAdapter(ProtocolAdapter):
         fee_level: FeeLevel = FeeLevel.MEDIUM,
         wait_for_completion: bool = True,
         use_fast_transfer: bool = True,
+        idempotency_key: str | None = None,
+        strict_settlement: bool = True,
     ) -> PaymentResult:
         """
         Execute a CCTP V2 cross-chain transfer.
@@ -295,7 +331,7 @@ class GatewayAdapter(ProtocolAdapter):
             )
 
         # Prepare transaction parameters
-        amount_units = int(amount * Decimal("1000000"))
+        amount_units = usdc_to_units(amount)
         dest_address_bytes32 = "0x" + destination_address.lower().replace("0x", "").zfill(64)
         source_domain = CCTP_DOMAIN_IDS[source_network]
         dest_domain = CCTP_DOMAIN_IDS[dest_network]
@@ -563,9 +599,19 @@ class GatewayAdapter(ProtocolAdapter):
 
             is_relayed = max_fee > 0
             should_mint = not is_relayed or dest_network == Network.ARC_TESTNET
+            attestation_message_hash = (
+                hashlib.sha256(attestation_message.encode("utf-8")).hexdigest()
+                if attestation_message
+                else None
+            )
+            attestation_signature_hash = (
+                hashlib.sha256(attestation_signature.encode("utf-8")).hexdigest()
+                if attestation_signature
+                else None
+            )
 
             mint_result = None
-            status = PaymentStatus.PROCESSING
+            status = PaymentStatus.PENDING_SETTLEMENT if strict_settlement else PaymentStatus.PROCESSING
 
             if should_mint:
                 self._logger.info(f"CCTP V2: Attempting Agent-Side Mint (relayed={is_relayed}, dest={dest_network.value})")
@@ -575,9 +621,9 @@ class GatewayAdapter(ProtocolAdapter):
                     note = f"Transfer completed via Agent-Side Mint. Tx: {mint_result.get('tx_hash')}"
                     blockchain_final_tx = mint_result.get('tx_hash')
                     status = (
-                        PaymentStatus.PROCESSING
+                        PaymentStatus.PENDING_SETTLEMENT
                         if mint_result.get("status") == "pending_confirmation"
-                        else PaymentStatus.COMPLETED
+                        else (PaymentStatus.SETTLED if strict_settlement else PaymentStatus.COMPLETED)
                     )
                 else:
                     note = f"Agent-Side Mint failed: {mint_result.get('error')}. Check destination wallet gas."
@@ -611,11 +657,15 @@ class GatewayAdapter(ProtocolAdapter):
             else:
                 note = "Transfer handed off to CCTP Relayer/Forwarding Service for final minting"
                 blockchain_final_tx = None
-                status = PaymentStatus.PROCESSING
+                status = PaymentStatus.PENDING_SETTLEMENT if strict_settlement else PaymentStatus.PROCESSING
                 self._logger.info(f"CCTP V2: Attestation secured. {note} (max_fee={max_fee})")
 
             return PaymentResult(
-                success=True,
+                success=(
+                    is_irreversible_success_status(status)
+                    if strict_settlement
+                    else status != PaymentStatus.FAILED
+                ),
                 transaction_id=burn_tx.id,
                 blockchain_tx=burn_tx.tx_hash, # Primary tx is the burn
                 amount=amount,
@@ -632,8 +682,8 @@ class GatewayAdapter(ProtocolAdapter):
                     "burn_tx_hash": burn_tx_hash,
                     "mint_tx_hash": blockchain_final_tx,
                     "mint_result": mint_result,
-                    "attestation_signature": attestation_signature,
-                    "attestation_message": attestation_message,
+                    "attestation_signature_hash": attestation_signature_hash,
+                    "attestation_message_hash": attestation_message_hash,
                     "attestation_url": attestation_url,
                     "source_network": source_network.value,
                     "destination_network": dest_network.value,
@@ -641,7 +691,9 @@ class GatewayAdapter(ProtocolAdapter):
                     "max_fee_usdc": str(Decimal(max_fee) / Decimal("1000000")),
                     "min_finality_threshold": finality_threshold,
                     "note": note,
+                    "settlement_final": bool(should_mint and mint_result and mint_result.get("success")),
                     "manual_mint_required": not is_relayed and (not mint_result or not mint_result.get("success")),
+                    "idempotency_key": idempotency_key,
                 },
             )
 

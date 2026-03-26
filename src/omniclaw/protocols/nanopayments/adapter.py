@@ -63,7 +63,13 @@ _SUCCESS_STATUS_CODES = (200, 201, 202, 204)
 
 def _decimal_to_atomic(amount_decimal: str) -> int:
     """Convert decimal USDC to atomic units."""
-    return int(Decimal(amount_decimal) * Decimal(1_000_000))
+    amount = Decimal(amount_decimal)
+    scaled = amount * Decimal(1_000_000)
+    if scaled != scaled.to_integral_value():
+        raise ValueError(
+            f"USDC amount has more than 6 decimal places: {amount_decimal}"
+        )
+    return int(scaled)
 
 
 def _atomic_to_decimal(amount_atomic: int | str) -> str:
@@ -120,7 +126,9 @@ class NanopaymentCircuitBreaker:
         if self._state == "open":
             # Check if recovery period has passed
             if self._last_failure_time is not None:
-                if time.monotonic() - self._last_failure_time >= self._recovery_seconds:
+                elapsed = time.monotonic() - self._last_failure_time
+                # Small epsilon avoids flakiness at exact float boundaries.
+                if elapsed + 1e-9 >= self._recovery_seconds:
                     self._state = "half_open"
         return self._state
 
@@ -444,6 +452,7 @@ class NanopaymentAdapter:
             ) from exc
 
         # Step 9: Settle payment with Circle Gateway
+        content_delivered = _is_success_status(retry_resp.status_code)
         settle_resp = None
         settlement_error: str | None = None
         transaction = ""
@@ -455,7 +464,8 @@ class NanopaymentAdapter:
                 f"Nanopayment circuit breaker is open. "
                 f"payer={payer_address}, amount={updated_kind.amount}"
             )
-            raise CircuitOpenError(recovery_seconds=self._circuit_breaker._recovery_seconds)
+            if not content_delivered:
+                raise CircuitOpenError(recovery_seconds=self._circuit_breaker._recovery_seconds)
 
         try:
             settle_resp = await self._settle_with_retry(
@@ -469,16 +479,22 @@ class NanopaymentAdapter:
             # Circuit breaker or transient error after all retries exhausted
             settlement_error = str(exc)
             self._circuit_breaker.record_failure()
-            raise SettlementError(
-                reason=f"Settlement failed after retries: {settlement_error}",
-                transaction=None,
-                payer=payer_address,
-            ) from exc
+            if not content_delivered:
+                raise SettlementError(
+                    reason=f"Settlement failed after retries: {settlement_error}",
+                    transaction=None,
+                    payer=payer_address,
+                ) from exc
+            logger.warning(
+                "Settlement warning after content delivery: %s (payer=%s)",
+                settlement_error,
+                payer_address,
+            )
         except SettlementError as exc:
             settlement_error = str(exc)
             if isinstance(exc, (NonceReusedError, InsufficientBalanceError)):
                 raise
-            if self._strict_settlement:
+            if self._strict_settlement and not content_delivered:
                 raise
             logger.warning(
                 "Settlement warning in non-strict mode: %s (payer=%s)",
@@ -487,8 +503,9 @@ class NanopaymentAdapter:
             )
 
         # Step 10: Determine final success status
-        content_delivered = _is_success_status(retry_resp.status_code)
         settlement_succeeded = settle_resp is not None and settle_resp.success
+        # If content was delivered, we treat the user request as successful even when
+        # settlement is delayed/degraded. Reconciliation can retry settlement later.
         final_success = settlement_succeeded if self._strict_settlement else (
             settlement_succeeded or content_delivered
         )
@@ -916,6 +933,7 @@ class NanopaymentProtocolAdapter:
         Returns:
             PaymentResult with nanopayment details.
         """
+        strict_settlement = bool(getattr(self._adapter, "_strict_settlement", True))
         try:
             if _is_url(recipient):
                 result = await self._adapter.pay_x402_url(
@@ -941,7 +959,15 @@ class NanopaymentProtocolAdapter:
                 amount=Decimal(result.amount_usdc) if result.amount_usdc else amount,
                 recipient=recipient,
                 method=PaymentMethod.NANOPAYMENT,
-                status=PaymentStatus.COMPLETED if result.success else PaymentStatus.FAILED,
+                status=(
+                    PaymentStatus.SETTLED
+                    if result.success and strict_settlement
+                    else (
+                        PaymentStatus.COMPLETED
+                        if result.success
+                        else (PaymentStatus.FAILED_FINAL if strict_settlement else PaymentStatus.FAILED)
+                    )
+                ),
                 error=None if result.success else "Nanopayment settlement failed",
                 metadata={
                     "nanopayment": True,
@@ -978,7 +1004,7 @@ class NanopaymentProtocolAdapter:
                 recipient=recipient,
                 method=PaymentMethod.NANOPAYMENT,
                 status=PaymentStatus.FAILED,
-                error=f"Nanopayment failed: {exc}",
+                error=f"Nanopayment failed (falling back disabled): {exc}",
                 metadata={"fallback_eligible": False},
             )
 

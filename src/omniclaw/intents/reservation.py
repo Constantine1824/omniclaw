@@ -118,7 +118,13 @@ class ReservationService:
             try:
                 total += Decimal(amount_str)
             except Exception as e:
-                logger.warning(f"Invalid decimal amount in reservation {res.get('_key')}: {amount_str}: {e}")
+                message = (
+                    "Corrupted reservation amount detected "
+                    f"(intent={res.get('intent_id')}, value={amount_str!r}): {e}"
+                )
+                logger.error(message)
+                # Fail closed: do not continue if reservation data is corrupted.
+                raise ValueError(message) from e
 
         logger.debug(f"Wallet {wallet_id} has {total} in active reservations")
         return total

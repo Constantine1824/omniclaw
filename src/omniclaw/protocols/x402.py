@@ -12,7 +12,9 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from omniclaw.core.exceptions import InsufficientBalanceError, ProtocolError, WalletError
+from omniclaw.core.idempotency import derive_idempotency_key
 from omniclaw.core.logging import get_logger
+from omniclaw.core.state_machine import is_effective_success_status, is_irreversible_success_status
 from omniclaw.core.types import (
     FeeLevel,
     Network,
@@ -299,6 +301,7 @@ class X402Adapter(ProtocolAdapter):
     ) -> PaymentResult:
         """Execute an x402 payment (V2)."""
         url = recipient
+        strict_settlement = bool(getattr(self._config, "payment_strict_settlement", True))
         request_method = str(kwargs.get("http_method", kwargs.get("method", "GET"))).upper()
         request_headers = kwargs.get("request_headers") or kwargs.get("headers")
         request_json = kwargs.get("request_json")
@@ -394,6 +397,18 @@ class X402Adapter(ProtocolAdapter):
 
             # Check if cross-chain transfer is needed
             is_cross_chain = agent_network != seller_network
+            canonical_idempotency_key = idempotency_key or derive_idempotency_key(
+                "x402",
+                wallet_id,
+                url,
+                request_method,
+                requirements.scheme,
+                requirements.network,
+                requirements.recipient,
+                requirements.max_amount_required,
+                request_json,
+                request_body,
+            )
 
             if is_cross_chain:
                 # Cross-chain: Use GatewayAdapter (CCTP)
@@ -409,12 +424,13 @@ class X402Adapter(ProtocolAdapter):
                     amount=required_amount,
                     purpose=purpose,
                     fee_level=fee_level,
+                    idempotency_key=canonical_idempotency_key,
                     wait_for_completion=True,
                     destination_chain=seller_network,
                     source_network=agent_network,
                 )
 
-                if not gateway_result.success:
+                if not (gateway_result.success or is_effective_success_status(gateway_result.status)):
                     return PaymentResult(
                         success=False,
                         transaction_id=gateway_result.transaction_id,
@@ -429,6 +445,7 @@ class X402Adapter(ProtocolAdapter):
                 # Use gateway result for payment proof
                 transfer_tx_hash = gateway_result.blockchain_tx
                 transfer_tx_id = gateway_result.transaction_id
+                transfer_status = gateway_result.status
             else:
                 # Same chain: Direct transfer
                 transfer_result = await self._wallet_service.transfer(
@@ -437,6 +454,7 @@ class X402Adapter(ProtocolAdapter):
                     amount=required_amount,
                     fee_level=fee_level,
                     wait_for_completion=True,
+                    idempotency_key=canonical_idempotency_key,
                 )
 
                 if not transfer_result.success:
@@ -457,6 +475,20 @@ class X402Adapter(ProtocolAdapter):
                 transfer_tx_id = (
                     transfer_result.transaction.id if transfer_result.transaction else None
                 )
+                tx = transfer_result.transaction
+                tx_state = (
+                    tx.state.value if (tx and hasattr(tx.state, "value")) else (str(tx.state) if tx else "")
+                )
+                if tx and tx_state == "COMPLETE":
+                    transfer_status = PaymentStatus.SETTLED if strict_settlement else PaymentStatus.COMPLETED
+                elif tx and tx_state in ("FAILED", "CANCELLED"):
+                    transfer_status = PaymentStatus.FAILED_FINAL if strict_settlement else PaymentStatus.FAILED
+                else:
+                    transfer_status = (
+                        PaymentStatus.PENDING_SETTLEMENT
+                        if strict_settlement
+                        else PaymentStatus.PROCESSING
+                    )
 
             # Create Payload (V2)
             payload = PaymentPayload(
@@ -497,18 +529,21 @@ class X402Adapter(ProtocolAdapter):
                     response_data = final_response.text
 
                 return PaymentResult(
-                    success=True,
+                    success=is_irreversible_success_status(transfer_status)
+                    if strict_settlement
+                    else True,
                     transaction_id=transfer_tx_id,
                     blockchain_tx=transfer_tx_hash,
                     amount=required_amount,
                     recipient=url,
                     method=self.method,
-                    status=PaymentStatus.COMPLETED,
+                    status=transfer_status if strict_settlement else PaymentStatus.COMPLETED,
                     resource_data=response_data,  # Store the actual API response
                     metadata={
                         "http_status": final_response.status_code,
                         "payment_response": final_response.headers.get(HEADER_PAYMENT_RESPONSE, ""),
                         "cross_chain": is_cross_chain,
+                        "idempotency_key": canonical_idempotency_key,
                     },
                 )
             else:

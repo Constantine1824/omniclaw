@@ -1463,7 +1463,8 @@ class TestCircuitBreakerOpenWithContent:
 
         # Should NOT raise — content was delivered despite circuit open
         result = await adapter.pay_x402_url("https://api.example.com/data")
-        assert result.success is True
+        # In strict settlement mode, HTTP content delivery alone is not final success.
+        assert result.success is False
         assert result.is_nanopayment is True
         assert result.response_data == '{"data": "premium content"}'
 

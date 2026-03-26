@@ -17,12 +17,14 @@ if TYPE_CHECKING:
     from omniclaw.protocols.nanopayments.client import NanopaymentClient
 
 from omniclaw.core.config import Config
+from omniclaw.core.idempotency import derive_idempotency_key
 from omniclaw.core.exceptions import (
     ConfigurationError,
     InsufficientBalanceError,
     PaymentError,
     ValidationError,
 )
+from omniclaw.core.state_machine import is_irreversible_success_status
 from omniclaw.core.types import (
     AccountType,
     AmountType,
@@ -158,6 +160,7 @@ class OmniClaw:
             entity_secret=entity_secret,
             network=network,
         )
+        self._enforce_production_startup_requirements()
 
         if circle_api_key and entity_secret:
             try:
@@ -209,7 +212,9 @@ class OmniClaw:
         self._reservation = ReservationService(self._storage)
         self._intent_facade = PaymentIntentFacade(self)
         self._batch_processor = BatchProcessor(self._router)
-        self._webhook_parser = WebhookParser()
+        self._webhook_parser = WebhookParser(
+            verification_key=os.environ.get("OMNICLAW_WEBHOOK_VERIFICATION_KEY"),
+        )
 
         # Initialize Trust Gate (ERC-8004)
         if isinstance(trust_policy, str):
@@ -232,6 +237,30 @@ class OmniClaw:
             "default": CircuitBreaker("default", self._storage),
             "circle_api": CircuitBreaker("circle_api", self._storage),
         }
+
+    def _enforce_production_startup_requirements(self) -> None:
+        """Fail fast when production hardening requirements are missing."""
+        env = str(self._config.env or "").lower()
+        if env not in {"prod", "production", "mainnet"}:
+            return
+
+        required_env = [
+            "OMNICLAW_SELLER_NONCE_REDIS_URL",
+            "OMNICLAW_WEBHOOK_VERIFICATION_KEY",
+            "OMNICLAW_WEBHOOK_DEDUP_DB_PATH",
+        ]
+        missing = [name for name in required_env if not os.environ.get(name)]
+        if missing:
+            raise ConfigurationError(
+                "Missing required production environment variables: " + ", ".join(missing),
+                details={"missing": missing, "env": env},
+            )
+
+        if not self._config.payment_strict_settlement:
+            raise ConfigurationError(
+                "OMNICLAW_STRICT_SETTLEMENT must be true in production environments",
+                details={"env": env, "payment_strict_settlement": self._config.payment_strict_settlement},
+            )
 
     def _init_nanopayments(self) -> None:
         """Initialize nanopayments components (NanoKeyVault, NanopaymentClient, NanopaymentAdapter)."""
@@ -267,6 +296,7 @@ class OmniClaw:
                 auto_topup_enabled=self._config.nanopayments_auto_topup,
                 auto_topup_threshold=self._config.nanopayments_topup_threshold,
                 auto_topup_amount=self._config.nanopayments_topup_amount,
+                strict_settlement=self._config.payment_strict_settlement,
             )
             self._logger.info("Nanopayments initialized (EIP-3009 Circle Gateway)")
         except Exception as e:
@@ -897,6 +927,16 @@ class OmniClaw:
         if amount_decimal <= 0:
             raise ValidationError(f"Payment amount must be positive. Got: {amount_decimal}")
 
+        if self._config.auto_reconcile_pending_settlements:
+            try:
+                await self.reconcile_pending_settlements(wallet_id=wallet_id, limit=20)
+            except Exception as reconcile_exc:
+                self._logger.warning(
+                    "Auto reconcile pending settlements failed (wallet=%s): %s",
+                    wallet_id,
+                    reconcile_exc,
+                )
+
         # Validate recipient format
         if validate_recipient:
             if not recipient:
@@ -912,7 +952,18 @@ class OmniClaw:
             elif recipient.startswith("http") and not recipient.startswith("https://"):
                 raise ValidationError(f"x402 recipient URL must use HTTPS. Got: {recipient!r}")
 
-        idempotency_key = idempotency_key or str(uuid.uuid4())
+        if not idempotency_key:
+            idempotency_key = derive_idempotency_key(
+                "payment",
+                wallet_id,
+                recipient,
+                str(amount_decimal),
+                purpose,
+                destination_chain.value if hasattr(destination_chain, "value") else destination_chain,
+                kwargs.get("http_method", kwargs.get("method", "GET")),
+                kwargs.get("request_json"),
+                kwargs.get("request_body", kwargs.get("body")),
+            )
 
         meta = metadata or {}
         meta["idempotency_key"] = idempotency_key
@@ -1048,6 +1099,7 @@ class OmniClaw:
                 lock_lost_event=lock_lost_event,
             )
         )
+        execution_result: PaymentResult | None = None
 
         try:
             # If we are confirming an intent, release its reservation now that we hold the mutex
@@ -1124,21 +1176,51 @@ class OmniClaw:
                         timeout_seconds=timeout_seconds,
                         **kwargs,
                     )
+                execution_result = result
                 if lock_lost_event.is_set():
                     raise PaymentError("Wallet lock lease was lost during payment execution.")
 
             # 3. Success Handling
-            if result.success:
+            if result.success or (
+                result.status in (
+                    PaymentStatus.AUTHORIZED,
+                    PaymentStatus.PENDING,
+                    PaymentStatus.PROCESSING,
+                    PaymentStatus.PENDING_SETTLEMENT,
+                    PaymentStatus.COMPLETED,
+                    PaymentStatus.SETTLED,
+                )
+            ):
                 await self._ledger.update_status(
                     ledger_entry.id,
-                    LedgerEntryStatus.COMPLETED
-                    if result.status == PaymentStatus.COMPLETED
-                    else LedgerEntryStatus.PENDING,
+                    LedgerEntryStatus.COMPLETED if is_irreversible_success_status(result.status) else LedgerEntryStatus.PENDING,
                     result.blockchain_tx,
                     metadata_updates={"transaction_id": result.transaction_id},
                 )
                 if guards_chain:
-                    await guards_chain.commit(reservation_tokens)
+                    try:
+                        await guards_chain.commit(reservation_tokens)
+                    except Exception as commit_error:
+                        await self._ledger.update_status(
+                            ledger_entry.id,
+                            LedgerEntryStatus.PENDING,
+                            result.blockchain_tx,
+                            metadata_updates={
+                                "transaction_id": result.transaction_id,
+                                "post_commit_error": str(commit_error),
+                                "tx_already_submitted": True,
+                            },
+                        )
+                        if result.metadata is None:
+                            result.metadata = {}
+                        result.metadata["post_commit_error"] = str(commit_error)
+                        self._logger.error(
+                            "Guard commit failed after payment execution (wallet=%s, ledger=%s): %s",
+                            wallet_id,
+                            ledger_entry.id,
+                            commit_error,
+                        )
+                        return result
             else:
                 await self._ledger.update_status(ledger_entry.id, LedgerEntryStatus.FAILED)
                 if guards_chain:
@@ -1149,6 +1231,20 @@ class OmniClaw:
         except Exception as e:
             # 4. Failure Handling & Queueing
             if strategy == PaymentStrategy.QUEUE_BACKGROUND:
+                if execution_result and (
+                    execution_result.transaction_id or execution_result.blockchain_tx
+                ):
+                    await self._ledger.update_status(
+                        ledger_entry.id,
+                        LedgerEntryStatus.PENDING,
+                        execution_result.blockchain_tx,
+                        metadata_updates={
+                            "error": str(e),
+                            "tx_already_submitted": True,
+                            "transaction_id": execution_result.transaction_id,
+                        },
+                    )
+                    raise e
                 self._logger.warning(f"Payment failed ({e}), queueing background retry.")
                 return await self._queue_payment(
                     context, ledger_entry.id, guards_chain, reservation_tokens
@@ -1536,6 +1632,12 @@ class OmniClaw:
             PaymentIntentStatus.REQUIRES_REVIEW,
         ):
             raise ValidationError(f"Intent cannot be confirmed. Status: {intent.status}")
+        if intent.status == PaymentIntentStatus.REQUIRES_REVIEW:
+            approved = bool((intent.metadata or {}).get("trust_review_approved"))
+            if not approved:
+                raise ValidationError(
+                    "Intent requires manual trust approval before confirmation."
+                )
 
         # Check expiry
         if intent.expires_at:
@@ -1614,6 +1716,28 @@ class OmniClaw:
 
         return await self._intent_service.cancel(intent.id, reason=reason)
 
+    async def approve_payment_intent_review(
+        self,
+        intent_id: str,
+        *,
+        approved_by: str,
+        reason: str | None = None,
+    ) -> PaymentIntent:
+        """Approve a REQUIRES_REVIEW intent for confirmation."""
+        intent = await self._intent_service.get(intent_id)
+        if not intent:
+            raise ValidationError(f"Intent not found: {intent_id}")
+        if intent.status != PaymentIntentStatus.REQUIRES_REVIEW:
+            raise ValidationError(f"Intent is not in REQUIRES_REVIEW status: {intent.status}")
+        metadata = intent.metadata or {}
+        metadata["trust_review_approved"] = True
+        metadata["trust_review_approved_by"] = approved_by
+        metadata["trust_review_reason"] = reason or ""
+        metadata["trust_review_approved_at"] = datetime.now(timezone.utc).isoformat()
+        intent.metadata = metadata
+        await self._intent_service._save(intent)
+        return intent
+
     async def batch_pay(
         self, requests: list[PaymentRequest], concurrency: int = 5
     ) -> BatchPaymentResult:
@@ -1670,6 +1794,117 @@ class OmniClaw:
 
         updated = await self._ledger.get(entry.id)
         return updated  # type: ignore
+
+    async def list_pending_settlements(
+        self,
+        *,
+        wallet_id: str | None = None,
+        limit: int = 100,
+    ) -> list[LedgerEntry]:
+        """List ledger entries awaiting settlement finalization."""
+        return await self._ledger.query(
+            wallet_id=wallet_id,
+            status=LedgerEntryStatus.PENDING,
+            limit=limit,
+        )
+
+    async def finalize_pending_settlement(
+        self,
+        entry_id: str,
+        *,
+        settled: bool,
+        settlement_tx_hash: str | None = None,
+        reason: str | None = None,
+        metadata_updates: dict[str, Any] | None = None,
+    ) -> LedgerEntry:
+        """
+        Finalize an in-flight settlement (manual/operator reconciliation hook).
+
+        This is intended for relayed cross-chain flows where final mint confirmation
+        arrives out-of-band from the original burn transaction.
+        """
+        entry = await self._ledger.get(entry_id)
+        if not entry:
+            raise ValidationError(f"Ledger entry not found: {entry_id}")
+        if entry.status != LedgerEntryStatus.PENDING:
+            raise ValidationError(f"Ledger entry is not pending settlement: {entry.status.value}")
+
+        final_status = LedgerEntryStatus.COMPLETED if settled else LedgerEntryStatus.FAILED
+        merged_updates = {
+            "settlement_final": bool(settled),
+            "settlement_reconciled_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if reason:
+            merged_updates["settlement_reconcile_reason"] = reason
+        if metadata_updates:
+            merged_updates.update(metadata_updates)
+
+        await self._ledger.update_status(
+            entry_id,
+            final_status,
+            tx_hash=settlement_tx_hash or entry.tx_hash,
+            metadata_updates=merged_updates,
+        )
+
+        updated = await self._ledger.get(entry_id)
+        if not updated:
+            raise PaymentError(f"Failed to reload updated ledger entry: {entry_id}")
+        return updated
+
+    async def reconcile_pending_settlements(
+        self,
+        *,
+        wallet_id: str | None = None,
+        limit: int = 100,
+    ) -> dict[str, int]:
+        """
+        Reconcile pending settlements by syncing provider transaction states.
+
+        Returns counters for operational monitoring.
+        """
+        pending_entries = await self.list_pending_settlements(wallet_id=wallet_id, limit=limit)
+        stats = {
+            "processed": 0,
+            "finalized": 0,
+            "still_pending": 0,
+            "errors": 0,
+        }
+
+        for entry in pending_entries:
+            stats["processed"] += 1
+            tx_id = (entry.metadata or {}).get("transaction_id")
+            if not tx_id:
+                stats["still_pending"] += 1
+                continue
+
+            try:
+                updated = await self.sync_transaction(entry.id)
+                if updated.status in (
+                    LedgerEntryStatus.COMPLETED,
+                    LedgerEntryStatus.FAILED,
+                    LedgerEntryStatus.CANCELLED,
+                ):
+                    await self._ledger.update_status(
+                        updated.id,
+                        updated.status,
+                        tx_hash=updated.tx_hash,
+                        metadata_updates={
+                            "settlement_final": updated.status == LedgerEntryStatus.COMPLETED,
+                            "settlement_reconciled_at": datetime.now(timezone.utc).isoformat(),
+                        },
+                    )
+                    stats["finalized"] += 1
+                else:
+                    stats["still_pending"] += 1
+            except Exception as exc:
+                stats["errors"] += 1
+                self._logger.warning(
+                    "Pending settlement reconcile failed (entry=%s): %s",
+                    entry.id,
+                    exc,
+                )
+
+        return stats
 
     async def add_budget_guard(
         self,

@@ -215,14 +215,14 @@ class TestNanopaymentClientInit:
     def test_defaults_to_testnet(self):
         with patch.dict("os.environ", {}, clear=True):
             with patch("omniclaw.protocols.nanopayments.client.NanopaymentHTTPClient"):
-                client = NanopaymentClient()
+                client = NanopaymentClient(api_key="key")
         assert client._environment == "testnet"
         assert client._base_url == "https://gateway-api-testnet.circle.com"
 
     def test_mainnet_url(self):
         with patch.dict("os.environ", {}, clear=True):
             with patch("omniclaw.protocols.nanopayments.client.NanopaymentHTTPClient"):
-                client = NanopaymentClient(environment="mainnet")
+                client = NanopaymentClient(environment="mainnet", api_key="key")
         assert client._environment == "mainnet"
         assert client._base_url == "https://gateway-api.circle.com"
 
@@ -241,26 +241,26 @@ class TestNanopaymentClientInit:
     def test_reads_environment_from_env(self):
         with patch.dict("os.environ", {"NANOPAYMENTS_ENVIRONMENT": "mainnet"}, clear=True):
             with patch("omniclaw.protocols.nanopayments.client.NanopaymentHTTPClient"):
-                client = NanopaymentClient()
+                client = NanopaymentClient(api_key="key")
         assert client._environment == "mainnet"
         assert client._base_url == "https://gateway-api.circle.com"
 
     def test_rejects_invalid_environment(self):
         with patch.dict("os.environ", {}, clear=True):
             with pytest.raises(ValueError) as exc_info:
-                NanopaymentClient(environment="invalid")
+                NanopaymentClient(environment="invalid", api_key="key")
         assert "invalid" in str(exc_info.value)
 
     def test_custom_base_url(self):
         with patch.dict("os.environ", {}, clear=True):
             with patch("omniclaw.protocols.nanopayments.client.NanopaymentHTTPClient"):
-                client = NanopaymentClient(base_url="https://mock.local/ gateway")
+                client = NanopaymentClient(base_url="https://mock.local/ gateway", api_key="key")
         assert client._base_url == "https://mock.local/ gateway"
 
     def test_custom_timeout(self):
         with patch.dict("os.environ", {}, clear=True):
             with patch("omniclaw.protocols.nanopayments.client.NanopaymentHTTPClient"):
-                client = NanopaymentClient(timeout=60.0)
+                client = NanopaymentClient(timeout=60.0, api_key="key")
         assert client._timeout == 60.0
 
 
@@ -271,7 +271,6 @@ class TestNanopaymentClientInit:
 
 class TestGetSupported:
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Circle API response format changed - needs update")
     async def test_parses_supported_kinds(self):
         response_data = _make_supported_response()
 
@@ -426,7 +425,6 @@ class TestGetVerifyingContract:
 
 class TestGetUsdcAddress:
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Circle API network list changed - needs update")
     async def test_returns_usdc_for_known_network(self):
         response_data = _make_supported_response()
 
@@ -684,22 +682,24 @@ class TestSettle:
 
 class TestCheckBalance:
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Mock setup incompatible with httpx changes")
     async def test_returns_gateway_balance(self):
+        supported_response = _make_supported_response()
         with patch("omniclaw.protocols.nanopayments.client.NanopaymentHTTPClient") as MockHTTP:
             mock_ctx = AsyncMock()
             mock_ctx.__aenter__.return_value = mock_ctx
             mock_ctx.__aexit__.return_value = None
-            mock_resp = MagicMock()
-            mock_resp.status_code = 200
-            mock_resp.json.return_value = {
-                "total": 5000000,
-                "available": 4500000,
-                "formattedTotal": "5.000000 USDC",
-                "formattedAvailable": "4.500000 USDC",
+            supported_resp = MagicMock()
+            supported_resp.status_code = 200
+            supported_resp.json.return_value = supported_response
+            supported_resp.text = ""
+            balance_resp = MagicMock()
+            balance_resp.status_code = 200
+            balance_resp.json.return_value = {
+                "balances": [{"balance": "5000000"}],
             }
-            mock_resp.text = ""
-            mock_ctx.get.return_value = mock_resp
+            balance_resp.text = ""
+            mock_ctx.get.return_value = supported_resp
+            mock_ctx.post.return_value = balance_resp
             MockHTTP.return_value = mock_ctx
 
             client = NanopaymentClient(api_key="key")
@@ -709,14 +709,13 @@ class TestCheckBalance:
             )
 
         assert balance.total == 5_000_000
-        assert balance.available == 4_500_000
+        assert balance.available == 5_000_000
         assert balance.formatted_total == "5.000000 USDC"
-        assert balance.formatted_available == "4.500000 USDC"
+        assert balance.formatted_available == "5.000000 USDC"
         assert balance.total_decimal == "5.000000"
-        assert balance.available_decimal == "4.500000"
+        assert balance.available_decimal == "5.000000"
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Mock setup incompatible with httpx changes")
     async def test_raises_unsupported_network_on_404(self):
         supported_response = _make_supported_response()
 
@@ -724,18 +723,10 @@ class TestCheckBalance:
             mock_ctx = AsyncMock()
             mock_ctx.__aenter__.return_value = mock_ctx
             mock_ctx.__aexit__.return_value = None
-            # First call: get_supported, second call: check_balance
-            mock_ctx.get.side_effect = [
-                MagicMock(
-                    status_code=200,
-                    json=lambda: supported_response,
-                    text="",
-                ),
-                MagicMock(
-                    status_code=404,
-                    text="Not Found",
-                ),
-            ]
+            supported_resp = MagicMock(status_code=200, text="")
+            supported_resp.json.return_value = supported_response
+            mock_ctx.get.return_value = supported_resp
+            mock_ctx.post.return_value = MagicMock(status_code=404, text="Not Found")
             MockHTTP.return_value = mock_ctx
 
             client = NanopaymentClient(api_key="key")
@@ -746,7 +737,6 @@ class TestCheckBalance:
                 )
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Mock setup incompatible with httpx changes")
     async def test_raises_gateway_api_error_on_http_failure(self):
         supported_response = _make_supported_response()
 
@@ -754,17 +744,10 @@ class TestCheckBalance:
             mock_ctx = AsyncMock()
             mock_ctx.__aenter__.return_value = mock_ctx
             mock_ctx.__aexit__.return_value = None
-            mock_ctx.get.side_effect = [
-                MagicMock(
-                    status_code=200,
-                    json=lambda: supported_response,
-                    text="",
-                ),
-                MagicMock(
-                    status_code=500,
-                    text="Internal Server Error",
-                ),
-            ]
+            supported_resp = MagicMock(status_code=200, text="")
+            supported_resp.json.return_value = supported_response
+            mock_ctx.get.return_value = supported_resp
+            mock_ctx.post.return_value = MagicMock(status_code=500, text="Internal Server Error")
             MockHTTP.return_value = mock_ctx
 
             client = NanopaymentClient(api_key="key")

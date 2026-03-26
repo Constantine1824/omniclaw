@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from omniclaw.storage.base import StorageBackend, register_storage_backend
@@ -121,9 +122,15 @@ class RedisStorage(StorageBackend):
         # But wait, _make_key uses collection + key
         redis_key = self._make_key(collection, key)
 
-        # INCRBYFLOAT is atomic
-        # Note: Redis stores this as string
-        new_val = await client.incrbyfloat(redis_key, float(amount))
+        # Keep caller-provided decimal precision when sending to Redis.
+        # Avoid converting through Python float first, which can introduce rounding artifacts.
+        try:
+            amount_str = str(Decimal(str(amount)))
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise ValueError(f"Invalid amount for atomic_add: {amount!r}") from exc
+
+        # INCRBYFLOAT is atomic and accepts decimal strings.
+        new_val = await client.execute_command("INCRBYFLOAT", redis_key, amount_str)
 
         # Add to index? Atomic counters might be separate from JSON docs.
         # Existing implementation adds to index. Let's keep it.

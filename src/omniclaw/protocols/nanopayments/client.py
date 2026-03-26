@@ -431,6 +431,10 @@ class NanopaymentClient:
             GATEWAY_API_TESTNET if env == "testnet" else GATEWAY_API_MAINNET
         )
         self._api_key = api_key or os.environ.get("CIRCLE_API_KEY", "")
+        if not self._api_key:
+            raise ValueError(
+                "Circle API key is required. Set CIRCLE_API_KEY or pass api_key explicitly."
+            )
         self._timeout = timeout
 
         # Supported networks cache
@@ -490,7 +494,7 @@ class NanopaymentClient:
         for kind_data in data.get("kinds", []):
             extra = kind_data.get("extra", {})
             assets = extra.get("assets", [])
-            usdc_address = None
+            usdc_address = extra.get("usdcAddress")
             for asset in assets:
                 if asset.get("symbol") == "USDC":
                     usdc_address = asset.get("address")

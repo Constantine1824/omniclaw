@@ -38,7 +38,7 @@
   <rect width="1400" height="860" rx="30" fill="url(#bg)"/>
 
   <text x="72" y="84" class="title">OmniClaw SDK Architecture</text>
-  <text x="72" y="118" class="subtitle">A production execution layer for AI-native payments across wallets, rails, trust, and operator control.</text>
+  <text x="72" y="118" class="subtitle">A production execution layer for AI-native payments across routing, settlement finality, trust, and webhook safety.</text>
 
   <rect x="62" y="170" width="240" height="152" rx="22" fill="url(#panel)" stroke="#79C8FF" stroke-width="2"/>
   <text x="86" y="212" class="small">APPLICATION LAYER</text>
@@ -52,7 +52,7 @@
 
   <rect x="392" y="266" width="430" height="84" rx="18" fill="#12284C" stroke="#5BB6FF" stroke-width="1.5"/>
   <text x="418" y="300" class="label">OmniClaw Client</text>
-  <text x="418" y="326" class="body">One entry point for wallet creation, simulate, pay, intents, ledger, and trust-aware flows.</text>
+  <text x="418" y="326" class="body">One entry point for wallet creation, simulate, pay, intents, and strict settlement.</text>
 
   <rect x="392" y="376" width="202" height="132" rx="18" fill="#112343" stroke="#79C8FF" stroke-width="1.5"/>
   <text x="416" y="410" class="label">Safety + Policy</text>
@@ -82,25 +82,25 @@
   <text x="950" y="190" class="small">PAYMENT RAILS</text>
   <text x="950" y="226" class="section">Execution Targets</text>
   <rect x="950" y="254" width="164" height="112" rx="18" fill="#112343" stroke="#5BB6FF" stroke-width="1.5"/>
-  <text x="974" y="292" class="label">Direct Transfer</text>
-  <text x="974" y="320" class="body">Wallet-to-wallet</text>
-  <text x="974" y="344" class="body">USDC settlement</text>
+  <text x="966" y="292" class="label">Transfer + CCTP</text>
+  <text x="972" y="320" class="body">Direct + cross-chain</text>
+  <text x="972" y="344" class="body">USDC execution</text>
   <rect x="1142" y="254" width="164" height="112" rx="18" fill="#112343" stroke="#5BB6FF" stroke-width="1.5"/>
-  <text x="1168" y="292" class="label">x402</text>
-  <text x="1168" y="320" class="body">HTTP paywalls</text>
-  <text x="1168" y="344" class="body">API monetization</text>
+  <text x="1162" y="292" class="label">x402 + Nano</text>
+  <text x="1160" y="320" class="body">HTTP paywalls</text>
+  <text x="1160" y="344" class="body">Batched EIP-3009</text>
 
   <rect x="922" y="430" width="416" height="268" rx="24" fill="url(#panel)" stroke="#8A7CFF" stroke-width="2"/>
   <text x="950" y="474" class="small">INFRASTRUCTURE + PROVIDERS</text>
-  <text x="950" y="510" class="section">Wallet and Trust Stack</text>
+  <text x="950" y="510" class="section">Provider and Security Stack</text>
   <rect x="950" y="538" width="164" height="126" rx="18" fill="#112343" stroke="#8A7CFF" stroke-width="1.5"/>
-  <text x="976" y="576" class="label">Circle</text>
-  <text x="976" y="604" class="body">Wallet sets</text>
-  <text x="976" y="628" class="body">Wallets + tx signing</text>
+  <text x="962" y="576" class="label">Circle + Gateway</text>
+  <text x="972" y="604" class="body">Wallets + transactions</text>
+  <text x="972" y="628" class="body">Gateway settlement</text>
   <rect x="1142" y="538" width="164" height="126" rx="18" fill="#112343" stroke="#8A7CFF" stroke-width="1.5"/>
-  <text x="1168" y="576" class="label">Redis + RPC</text>
-  <text x="1168" y="604" class="body">Locks + reservations</text>
-  <text x="1168" y="628" class="body">Trust data access</text>
+  <text x="1152" y="576" class="label">Redis + Webhooks</text>
+  <text x="1158" y="604" class="body">Locks + reservations</text>
+  <text x="1158" y="628" class="body">Signatures + dedup</text>
 
   <path d="M302 246H340L340 308H392" stroke="#79C8FF" stroke-width="5" marker-end="url(#arrow)" filter="url(#glow)"/>
   <path d="M854 308H902L902 310H950" stroke="#79C8FF" stroke-width="5" marker-end="url(#arrow)" filter="url(#glow)"/>
@@ -111,5 +111,5 @@
   <path d="M494 508V534" stroke="#79C8FF" stroke-width="4"/>
   <path d="M722 508V534" stroke="#79C8FF" stroke-width="4"/>
 
-  <text x="80" y="786" class="body">Core flow: app calls OmniClaw -> simulate / guard / trust -> route across payment rails -> settle through provider infrastructure.</text>
+  <text x="80" y="786" class="body">Core flow: app calls OmniClaw -> simulate / guard / trust -> route across rails -> strict settlement + webhook-safe operations.</text>
 </svg>

@@ -6,6 +6,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from omniclaw.core.logging import get_logger
+from omniclaw.core.state_machine import is_effective_success_status
 from omniclaw.core.types import (
     FeeLevel,
     Network,
@@ -140,7 +141,7 @@ class PaymentRouter:
             )
             last_result = result
 
-            if result.success:
+            if result.success or is_effective_success_status(result.status):
                 if guards_passed:
                     result.guards_passed = guards_passed
                 return result

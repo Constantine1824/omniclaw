@@ -4,6 +4,9 @@ Webhook Parser Infrastructure.
 
 import base64
 import json
+import os
+import sqlite3
+from contextlib import closing
 from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
@@ -24,6 +27,12 @@ class InvalidSignatureError(ValidationError):
     pass
 
 
+class DuplicateWebhookError(ValidationError):
+    """Raised when a webhook notificationId has already been processed."""
+
+    pass
+
+
 class WebhookParser:
     """
     Framework-agnostic webhook parser.
@@ -40,6 +49,61 @@ class WebhookParser:
             verification_key: Optional public key for signature verification.
         """
         self.verification_key = verification_key
+        # Circle production retries can span hours. Keep future skew tight, but allow older
+        # signed payloads to arrive inside an operational retry window.
+        self._max_replay_age_seconds = int(
+            os.environ.get("OMNICLAW_WEBHOOK_MAX_REPLAY_AGE_SECONDS", "43200")
+        )
+        self._max_future_skew_seconds = int(
+            os.environ.get("OMNICLAW_WEBHOOK_MAX_FUTURE_SKEW_SECONDS", "300")
+        )
+        self._dedup_db_path = os.environ.get("OMNICLAW_WEBHOOK_DEDUP_DB_PATH")
+        self._dedup_enabled = (
+            os.environ.get("OMNICLAW_WEBHOOK_DEDUP_ENABLED", "true").lower() == "true"
+        )
+        self._init_dedup_store()
+
+    def _init_dedup_store(self) -> None:
+        if not self._dedup_enabled or not self._dedup_db_path:
+            return
+        directory = os.path.dirname(self._dedup_db_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with closing(sqlite3.connect(self._dedup_db_path)) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS processed_webhooks (
+                    notification_id TEXT PRIMARY KEY,
+                    processed_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+
+    def _mark_notification_processed(self, notification_id: str) -> bool:
+        """
+        Persist notificationId for idempotent consumption.
+
+        Returns:
+            True if notification_id was newly recorded, False if duplicate.
+        """
+        if not self._dedup_enabled:
+            return True
+        if not self._dedup_db_path:
+            # No persistent store configured; treat as non-duplicate.
+            return True
+
+        now_iso = datetime.utcnow().isoformat()
+        with closing(sqlite3.connect(self._dedup_db_path)) as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO processed_webhooks(notification_id, processed_at)
+                VALUES (?, ?)
+                """,
+                (notification_id, now_iso),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
 
     @staticmethod
     def _header_value(headers: Mapping[str, str], name: str) -> str | None:
@@ -191,10 +255,19 @@ class WebhookParser:
             except Exception as e:
                 raise ValidationError(f"Invalid 'createDate' format: {e}") from e
 
-        # 2. Defend Against Replay Attacks (Max 5 Minute Drift allowed)
-        drift = abs((datetime.utcnow() - timestamp).total_seconds())
-        if drift > 300: # 5 Minutes
-            raise InvalidSignatureError(f"Webhook payload exceeds replay attack temporal drift window ({drift:.1f}s > 300s)")
+        # 2. Defend Against Replay Attacks.
+        # Accept delayed deliveries within retry window, but reject far-future timestamps.
+        age_seconds = (datetime.utcnow() - timestamp).total_seconds()
+        if age_seconds < -self._max_future_skew_seconds:
+            raise InvalidSignatureError(
+                "Webhook payload timestamp is too far in the future "
+                f"({-age_seconds:.1f}s > {self._max_future_skew_seconds}s)"
+            )
+        if age_seconds > self._max_replay_age_seconds:
+            raise InvalidSignatureError(
+                "Webhook payload exceeds replay age window "
+                f"({age_seconds:.1f}s > {self._max_replay_age_seconds}s)"
+            )
 
         # 2. Map Event
         if "notificationType" not in data:
@@ -218,10 +291,15 @@ class WebhookParser:
         except ValueError:
             event_type = NotificationType.UNKNOWN
 
-        # (Extracted earlier for replay defense)
+        notification_id = str(data.get("notificationId", "")).strip()
+        if not notification_id:
+            raise ValidationError("Missing 'notificationId' in payload")
+
+        if not self._mark_notification_processed(notification_id):
+            raise DuplicateWebhookError(f"Duplicate webhook notificationId: {notification_id}")
 
         return WebhookEvent(
-            id=data.get("notificationId", "unknown"),
+            id=notification_id,
             type=event_type,
             timestamp=timestamp,
             data=data.get("notification", {}),

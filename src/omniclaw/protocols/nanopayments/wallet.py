@@ -271,7 +271,12 @@ class GatewayWalletManager:
 
         try:
             value = Decimal(amount_decimal)
-            return int(value * Decimal(1_000_000))
+            scaled = value * Decimal(1_000_000)
+            if scaled != scaled.to_integral_value():
+                raise ValueError(
+                    f"USDC amount has more than 6 decimal places: {amount_decimal}"
+                )
+            return int(scaled)
         except InvalidOperation:
             raise ValueError(f"Invalid USDC amount: {amount_decimal}")
 
@@ -286,7 +291,7 @@ class GatewayWalletManager:
         """Build a base transaction dict."""
         if nonce is None:
             nonce = self._w3.eth.get_transaction_count(self._address)
-        return {
+        tx: dict[str, Any] = {
             "from": self._address,
             "to": to,
             "data": data,
@@ -294,6 +299,35 @@ class GatewayWalletManager:
             "chainId": self._chain_id,
             "nonce": nonce,
         }
+        # Estimate gas with a safety margin; fallback to a conservative default.
+        try:
+            gas_estimate = self._w3.eth.estimate_gas(
+                {
+                    "from": self._address,
+                    "to": to,
+                    "data": data,
+                    "value": value,
+                }
+            )
+            tx["gas"] = int(gas_estimate * 1.2)
+        except Exception:
+            tx["gas"] = 300_000
+
+        # Prefer EIP-1559 fees when supported, fallback to legacy gasPrice.
+        try:
+            latest_block = self._w3.eth.get_block("latest")
+            base_fee = latest_block.get("baseFeePerGas") if latest_block else None
+        except Exception:
+            base_fee = None
+
+        if base_fee is not None:
+            max_priority_fee = self._w3.to_wei(2, "gwei")
+            tx["maxPriorityFeePerGas"] = int(max_priority_fee)
+            tx["maxFeePerGas"] = int(base_fee * 2 + max_priority_fee)
+        else:
+            tx["gasPrice"] = self._w3.eth.gas_price
+
+        return tx
 
     def _sign_and_send(self, tx: dict[str, Any], error_type: type = DepositError) -> str:
         """Sign a transaction and send it, returning the tx hash."""

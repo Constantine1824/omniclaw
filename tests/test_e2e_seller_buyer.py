@@ -23,7 +23,11 @@ import asyncio
 import base64
 import json
 import pytest
+import signal
+import subprocess
+import sys
 import time
+import os
 
 import httpx
 
@@ -61,9 +65,42 @@ def is_server_running():
 
 
 def require_server():
-    """Skip if server not running."""
-    if not is_server_running():
-        pytest.skip("Start server first: python scripts/x402_simple_server.py")
+    """Assert server is running."""
+    assert is_server_running(), "Test server is not running"
+
+
+def _wait_for_server(timeout_seconds: float = 20.0) -> bool:
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if is_server_running():
+            return True
+        time.sleep(0.2)
+    return False
+
+
+@pytest.fixture(scope="module", autouse=True)
+def ensure_test_server():
+    """Start the local x402 test server for this module when needed."""
+    if is_server_running():
+        yield
+        return
+
+    process = subprocess.Popen(  # noqa: S603
+        [sys.executable, "scripts/x402_simple_server.py"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        preexec_fn=os.setsid if os.name != "nt" else None,
+    )
+    try:
+        assert _wait_for_server(), "Failed to start x402 test server"
+        yield
+    finally:
+        if process.poll() is None:
+            if os.name == "nt":
+                process.terminate()
+            else:
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            process.wait(timeout=10)
 
 
 # =============================================================================

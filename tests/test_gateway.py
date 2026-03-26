@@ -43,7 +43,13 @@ class TestGatewaySupports:
     """Test routing detection."""
 
     def test_supports_when_destination_chain_provided(self, adapter):
-        assert adapter.supports("0xabc", destination_chain=Network.ARB_SEPOLIA) is True
+        assert adapter.supports(
+            "0x742d35Cc6634C0532925a3b844Bc9e7595f1E123",
+            destination_chain=Network.ARB_SEPOLIA,
+        ) is True
+
+    def test_does_not_support_invalid_recipient(self, adapter):
+        assert adapter.supports("0xabc", destination_chain=Network.ARB_SEPOLIA) is False
 
     def test_does_not_support_without_destination_chain(self, adapter):
         assert adapter.supports("0xabc") is False
@@ -84,9 +90,40 @@ class TestGatewayExecute:
             source_network=Network.ETH_SEPOLIA,
             destination_chain=Network.ETH_SEPOLIA,
         )
-        assert result.success is True
+        assert result.success is False
+        assert result.status == PaymentStatus.PENDING_SETTLEMENT
         assert result.metadata["same_chain"] is True
         wallet_service.transfer.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_same_chain_derives_deterministic_idempotency_key(self, adapter, wallet_service):
+        """Missing idempotency_key should be deterministic for same request."""
+        mock_tx = MagicMock()
+        mock_tx.id = "tx-123"
+        mock_tx.tx_hash = "0xhash"
+        wallet_service.transfer = AsyncMock(return_value=mock_tx)
+
+        await adapter.execute(
+            wallet_id="w1",
+            recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f1E123",
+            amount=Decimal("10.00"),
+            source_network=Network.ETH_SEPOLIA,
+            destination_chain=Network.ETH_SEPOLIA,
+            purpose="invoice-1",
+        )
+        first_key = wallet_service.transfer.await_args.kwargs["idempotency_key"]
+
+        await adapter.execute(
+            wallet_id="w1",
+            recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f1E123",
+            amount=Decimal("10.00"),
+            source_network=Network.ETH_SEPOLIA,
+            destination_chain=Network.ETH_SEPOLIA,
+            purpose="invoice-1",
+        )
+        second_key = wallet_service.transfer.await_args.kwargs["idempotency_key"]
+
+        assert first_key == second_key
 
     @pytest.mark.asyncio
     async def test_same_chain_transfer_failure(self, adapter, wallet_service):

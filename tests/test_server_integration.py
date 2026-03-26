@@ -56,9 +56,49 @@ def is_server_running() -> bool:
 
 
 def require_server():
-    """Skip test if server is not running."""
-    if not is_server_running():
-        pytest.skip("Test server not running. Start with: python scripts/x402_simple_server.py")
+    """Assert the test server is running."""
+    assert is_server_running(), "Test server is not running"
+
+
+def _wait_for_server(timeout_seconds: float = 20.0) -> bool:
+    """Wait until the local test server starts accepting requests."""
+    deadline = time.time() + timeout_seconds
+    while time.time() < deadline:
+        if is_server_running():
+            return True
+        time.sleep(0.2)
+    return False
+
+
+@pytest.fixture(scope="module", autouse=True)
+def ensure_test_server():
+    """
+    Ensure an x402 test server is available for this module.
+
+    If one is not already running, start scripts/x402_simple_server.py for the
+    duration of these tests.
+    """
+    if is_server_running():
+        yield
+        return
+
+    process = subprocess.Popen(  # noqa: S603
+        [sys.executable, "scripts/x402_simple_server.py"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        preexec_fn=os.setsid if os.name != "nt" else None,
+    )
+
+    try:
+        assert _wait_for_server(), "Failed to start x402 test server"
+        yield
+    finally:
+        if process.poll() is None:
+            if os.name == "nt":
+                process.terminate()
+            else:
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            process.wait(timeout=10)
 
 
 # =============================================================================
@@ -83,7 +123,7 @@ class TestServerConnectivity:
             print(f"  Server status: {response.status_code}")
             assert response.status_code in [200, 404]  # 404 if no /health endpoint
         except Exception as e:
-            pytest.skip(f"Server not reachable: {e}")
+            pytest.fail(f"Server not reachable: {e}")
 
     def test_server_lists_routes(self):
         """Test that we can see available routes."""

@@ -292,6 +292,34 @@ class TestSellerSecurityHardening:
                 name="Nonce Strict",
             )
 
+    def test_gateway_signature_verification_requires_complete_domain_fields(self):
+        seller = Seller(
+            seller_address="0x742d35Cc6634C0532925a3b844Bc9e7595f1E123",
+            name="Domain Strict",
+        )
+        accepted = {
+            "network": "eip155:84532",
+            "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            "extra": {
+                "name": "GatewayWalletBatched",
+                # version and verifyingContract intentionally missing
+            },
+        }
+        ok, error = seller._verify_eip3009_signature(
+            authorization={
+                "from": "0xAAAA1111BBBB2222CCCC3333DDDD4444EEEE5555",
+                "to": "0x742d35Cc6634C0532925a3b844Bc9e7595f1E123",
+                "value": "1000",
+                "validAfter": "0",
+                "validBefore": "9999999999",
+                "nonce": "0x" + "11" * 32,
+            },
+            signature="0x",
+            accepted=accepted,
+        )
+        assert ok is False
+        assert "Missing required EIP-712 domain fields" in error
+
 
 # =============================================================================
 # TEST PAYMENT VERIFICATION

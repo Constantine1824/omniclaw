@@ -209,7 +209,7 @@ class Seller:
 
         self._endpoints: dict[str, Endpoint] = {}
         self._payments: dict[str, PaymentRecord] = {}
-        self._used_nonces: dict[tuple[str, str, str], int] = {}
+        self._used_nonces: dict[tuple[str, str, str, str, str], int] = {}
         self._nonce_lock = asyncio.Lock()
         self._facilitator = facilitator
 
@@ -350,7 +350,7 @@ class Seller:
                         "asset": self.config.usdc_contract,
                         "amount": str(amount_atomic),
                         "payTo": self.config.seller_address,
-                        "maxTimeoutSeconds": 300,
+                        "maxTimeoutSeconds": 345600,
                         "extra": {"name": "USDC", "version": "2"},
                     }
                 )
@@ -368,7 +368,7 @@ class Seller:
                         "asset": self.config.usdc_contract,
                         "amount": str(amount_atomic),
                         "payTo": self.config.seller_address,
-                        "maxTimeoutSeconds": 300,
+                        "maxTimeoutSeconds": 345600,
                         "extra": {
                             "name": "GatewayWalletBatched",
                             "version": "1",
@@ -386,19 +386,28 @@ class Seller:
         payer: str,
         nonce: str,
         valid_before: int,
+        verifying_contract: str = "",
+        pay_to: str = "",
     ) -> bool:
         """Atomically mark nonce usage; returns False when nonce is already used."""
         now = int(time.time())
         ttl = max((valid_before - now) + self._nonce_ttl_floor_seconds, self._nonce_ttl_floor_seconds)
+        replay_scope = (
+            str(network).lower(),
+            str(verifying_contract).lower(),
+            str(pay_to).lower(),
+            str(payer).lower(),
+            str(nonce),
+        )
 
         if self._nonce_redis_client is not None:
-            key = f"omniclaw:seller:nonce:{network}:{payer}:{nonce}"
+            key = "omniclaw:seller:nonce:" + ":".join(replay_scope)
             result = await self._nonce_redis_client.set(key, "1", ex=ttl, nx=True)
             return bool(result)
 
         async with self._nonce_lock:
             self._prune_local_nonces(now)
-            nonce_key = (network, payer, nonce)
+            nonce_key = replay_scope
             expiry = self._used_nonces.get(nonce_key)
             if expiry is not None and expiry > now:
                 return False
@@ -412,19 +421,39 @@ class Seller:
         for key in expired:
             del self._used_nonces[key]
 
-    def _check_local_nonce_used(self, *, network: str, payer: str, nonce: str) -> bool:
-        """Check in-memory nonce usage for sync verification paths."""
-        now = int(time.time())
-        self._prune_local_nonces(now)
-        expiry = self._used_nonces.get((network, payer, nonce))
-        return bool(expiry and expiry > now)
+    def _check_and_mark_nonce_sync(
+        self,
+        *,
+        network: str,
+        payer: str,
+        nonce: str,
+        valid_before: int,
+        verifying_contract: str = "",
+        pay_to: str = "",
+    ) -> tuple[bool, str]:
+        """Sync helper for nonce marking; rejects usage from running event loops."""
+        try:
+            asyncio.get_running_loop()
+            return False, "Sync verify called from async loop; use verify_payment_async()"
+        except RuntimeError:
+            pass
 
-    def _mark_local_nonce(self, *, network: str, payer: str, nonce: str, valid_before: int) -> None:
-        """Mark in-memory nonce usage for sync verification paths."""
-        now = int(time.time())
-        ttl = max((valid_before - now) + self._nonce_ttl_floor_seconds, self._nonce_ttl_floor_seconds)
-        self._prune_local_nonces(now)
-        self._used_nonces[(network, payer, nonce)] = now + ttl
+        try:
+            marked = asyncio.run(
+                self._check_and_mark_nonce(
+                    network=network,
+                    payer=payer,
+                    nonce=nonce,
+                    valid_before=valid_before,
+                    verifying_contract=verifying_contract,
+                    pay_to=pay_to,
+                )
+            )
+            if not marked:
+                return False, "Nonce already used"
+            return True, ""
+        except Exception as exc:
+            return False, f"Nonce replay protection error: {exc}"
 
     def create_402_response(self, path: str, url: str) -> tuple[dict, str]:
         """Create 402 response for a path."""
@@ -468,6 +497,13 @@ class Seller:
             (is_valid, error, payment_record)
         """
         try:
+            if settle_payment and not self._facilitator:
+                return (
+                    False,
+                    "Settlement requested but no facilitator is configured",
+                    None,
+                )
+
             scheme = payment_payload.get("scheme")
             payment_data = payment_payload.get("payload", {})
             authorization = payment_data.get("authorization", {})
@@ -522,12 +558,19 @@ class Seller:
 
             nonce = str(authorization.get("nonce", ""))
             network = str(accepted.get("network", self.config.network))
-            if nonce and self._check_local_nonce_used(
-                network=network,
-                payer=buyer_address,
-                nonce=nonce,
-            ):
-                return False, "Nonce already used", None
+            pay_to = str(accepted.get("payTo", self.config.seller_address))
+            verifying_contract = str(((accepted.get("extra") or {}).get("verifyingContract", "")))
+            if nonce:
+                nonce_marked, nonce_error = self._check_and_mark_nonce_sync(
+                    network=network,
+                    payer=buyer_address,
+                    nonce=nonce,
+                    valid_before=valid_before,
+                    verifying_contract=verifying_contract,
+                    pay_to=pay_to,
+                )
+                if not nonce_marked:
+                    return False, nonce_error, None
 
             # Create payment record
             record = PaymentRecord(
@@ -543,13 +586,6 @@ class Seller:
 
             # Store payment
             self._payments[payment_id] = record
-            if nonce:
-                self._mark_local_nonce(
-                    network=network,
-                    payer=buyer_address,
-                    nonce=nonce,
-                    valid_before=valid_before,
-                )
 
             # Send webhook
             if self.config.webhook_url:
@@ -582,6 +618,13 @@ class Seller:
         import hashlib
 
         try:
+            if settle_payment and not self._facilitator:
+                return (
+                    False,
+                    "Settlement requested but no facilitator is configured",
+                    None,
+                )
+
             scheme = payment_payload.get("scheme")
             payment_data = payment_payload.get("payload", {})
             authorization = payment_data.get("authorization", {})
@@ -621,12 +664,16 @@ class Seller:
                 nonce = str(authorization.get("nonce", ""))
                 valid_before = int(authorization.get("validBefore", 0))
                 network = str(accepted.get("network", self.config.network))
+                pay_to = str(accepted.get("payTo", self.config.seller_address))
+                verifying_contract = str(((accepted.get("extra") or {}).get("verifyingContract", "")))
                 if nonce:
                     nonce_marked = await self._check_and_mark_nonce(
                         network=network,
                         payer=buyer_address.lower(),
                         nonce=nonce,
                         valid_before=valid_before,
+                        verifying_contract=verifying_contract,
+                        pay_to=pay_to,
                     )
                     if not nonce_marked:
                         return False, "Nonce already used", None
@@ -690,11 +737,15 @@ class Seller:
             nonce = str(authorization.get("nonce", ""))
             valid_before = int(authorization.get("validBefore", 0))
             network = str(accepted.get("network", self.config.network))
+            pay_to = str(accepted.get("payTo", self.config.seller_address))
+            verifying_contract = str(((accepted.get("extra") or {}).get("verifyingContract", "")))
             nonce_marked = await self._check_and_mark_nonce(
                 network=network,
                 payer=buyer_address,
                 nonce=nonce,
                 valid_before=valid_before,
+                verifying_contract=verifying_contract,
+                pay_to=pay_to,
             )
             if not nonce_marked:
                 return False, "Nonce already used", None
@@ -745,11 +796,18 @@ class Seller:
                 chain_id = int(network.split(":")[-1])
 
             extra = accepted.get("extra", {}) or {}
-            domain_name = str(extra.get("name", "USDC"))
-            domain_version = str(extra.get("version", "2"))
-            verifying_contract = str(extra.get("verifyingContract", "")).strip()
-            if not verifying_contract:
-                verifying_contract = str(accepted.get("asset", self.config.usdc_contract))
+            if extra:
+                required_extra_fields = ("name", "version", "verifyingContract")
+                missing = [field for field in required_extra_fields if not extra.get(field)]
+                if missing:
+                    return False, f"Missing required EIP-712 domain fields: {', '.join(missing)}"
+                domain_name = str(extra.get("name"))
+                domain_version = str(extra.get("version"))
+                verifying_contract = str(extra.get("verifyingContract")).strip()
+            else:
+                domain_name = "USDC"
+                domain_version = "2"
+                verifying_contract = str(accepted.get("asset", self.config.usdc_contract)).strip()
 
             if not _EVM_ADDRESS_RE.match(verifying_contract):
                 return False, f"Invalid verifyingContract: {verifying_contract}"
@@ -899,8 +957,6 @@ class Seller:
         Returns:
             (is_valid, error, payment_record)
         """
-        import asyncio
-
         # Build the proper format for facilitator
         payment_requirements = {
             "scheme": accepted.get("scheme", "exact"),
@@ -920,27 +976,15 @@ class Seller:
                 return await self._facilitator.verify(payment_payload, payment_requirements)
 
         try:
+            asyncio.get_running_loop()
+            return False, "Sync verify called from async loop; use verify_payment_async()", None
+        except RuntimeError:
+            pass
+
+        try:
             result = asyncio.run(_do_verify())
-        except RuntimeError as e:
-            # If already in async context, we need to handle differently
-            if "asyncio.run() cannot be called from a running event loop" in str(e):
-                # Try to get or create event loop
-                try:
-                    loop = asyncio.get_event_loop()
-                    if loop.is_running():
-                        # We're in an async context, need to use await
-                        return (
-                            False,
-                            "Cannot call facilitator from async context without await",
-                            None,
-                        )
-                    else:
-                        # Loop exists but not running - use it
-                        result = loop.run_until_complete(_do_verify())
-                except Exception as inner_e:
-                    return False, f"Facilitator error: {inner_e}", None
-            else:
-                return False, f"Facilitator error: {e}", None
+        except Exception as e:
+            return False, f"Facilitator error: {e}", None
 
         # Process result
         if settle_payment:
@@ -961,17 +1005,19 @@ class Seller:
         nonce = str(authorization.get("nonce", ""))
         valid_before = int(authorization.get("validBefore", 0))
         network = str(accepted.get("network", self.config.network))
+        pay_to = str(accepted.get("payTo", self.config.seller_address))
+        verifying_contract = str(((accepted.get("extra") or {}).get("verifyingContract", "")))
         if nonce:
-            nonce_marked = asyncio.run(
-                self._check_and_mark_nonce(
-                    network=network,
-                    payer=buyer_address.lower(),
-                    nonce=nonce,
-                    valid_before=valid_before,
-                )
+            nonce_marked, nonce_error = self._check_and_mark_nonce_sync(
+                network=network,
+                payer=buyer_address.lower(),
+                nonce=nonce,
+                valid_before=valid_before,
+                verifying_contract=verifying_contract,
+                pay_to=pay_to,
             )
             if not nonce_marked:
-                return False, "Nonce already used", None
+                return False, nonce_error, None
 
         payment_id = hashlib.sha256(f"{buyer_address}{time.time()}".encode()).hexdigest()[:16]
         paid = int(payment_requirements["amount"])
@@ -1165,7 +1211,11 @@ class Seller:
                             headers=headers,
                         )
 
-                    is_valid, error, record = await self.verify_payment_async(payload, accepted)
+                    is_valid, error, record = await self.verify_payment_async(
+                        payload,
+                        accepted,
+                        settle_payment=True,
+                    )
 
                     if not is_valid:
                         headers, body = self.create_402_response(path, str(request.url))

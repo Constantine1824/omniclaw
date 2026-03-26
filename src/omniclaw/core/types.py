@@ -144,6 +144,10 @@ class PaymentMethod(str, Enum):
 class PaymentStatus(str, Enum):
     """Payment transaction status."""
 
+    AUTHORIZED = "authorized"  # Authorization created but settlement not started
+    PENDING_SETTLEMENT = "pending_settlement"  # Submitted and awaiting final settlement
+    SETTLED = "settled"  # Irreversible settlement confirmed
+    FAILED_FINAL = "failed_final"  # Irreversible terminal failure
     PENDING = "pending"  # Payment initiated but not yet processing
     PROCESSING = "processing"  # Payment is being processed on-chain
     COMPLETED = "completed"  # Payment successfully completed

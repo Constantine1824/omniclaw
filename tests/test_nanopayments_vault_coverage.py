@@ -145,7 +145,7 @@ class TestDefaultNetworkProperty:
 
     def test_default_network_from_environment_testnet(self, vault):
         """Default network is determined from environment."""
-        assert vault.default_network == "eip155:11155111"  # Sepolia
+        assert vault.default_network == "eip155:5042002"  # Arc testnet
 
     def test_default_network_from_environment_mainnet(self, vault_mainnet):
         """Mainnet environment gives Ethereum mainnet."""
@@ -452,9 +452,9 @@ class TestCreateWalletManager:
         # Add a real key so get_raw_key can decrypt it
         await vault.add_key("test-key", PRIVATE_KEY)
 
-        # The default network for testnet is eip155:11155111
+        # The default network for testnet is eip155:5042002
         with patch.dict(
-            "os.environ", {"RPC_URL_EIP155_11155111": "https://network-rpc.example.com"}
+            "os.environ", {"RPC_URL_EIP155_5042002": "https://network-rpc.example.com"}
         ):
             with patch(
                 "omniclaw.protocols.nanopayments.wallet.GatewayWalletManager"
