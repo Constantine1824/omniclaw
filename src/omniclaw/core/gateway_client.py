@@ -8,7 +8,6 @@ off-chain signing of burn intents for gasless USDC transfers.
 from __future__ import annotations
 
 import secrets
-import struct
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -25,18 +24,35 @@ GATEWAY_DOMAINS = {
     # Mainnet
     Network.ETH: 0,
     Network.AVAX: 1,
+    Network.OP: 2,
+    Network.ARB: 3,
+    Network.SOL: 5,
     Network.BASE: 6,
+    Network.MATIC: 7,
+    Network.UNI: 10,
     # Testnets
     Network.ETH_SEPOLIA: 0,
     Network.AVAX_FUJI: 1,
+    Network.OP_SEPOLIA: 2,
+    Network.ARB_SEPOLIA: 3,
+    Network.SOL_DEVNET: 5,
     Network.BASE_SEPOLIA: 6,
+    Network.MATIC_AMOY: 7,
+    Network.UNI_SEPOLIA: 10,
+    Network.ARC_TESTNET: 26,
 }
 
 # Reverse mapping for domain -> Network
 DOMAIN_TO_NETWORK = {
     0: Network.ETH,
     1: Network.AVAX,
+    2: Network.OP,
+    3: Network.ARB,
+    5: Network.SOL,
     6: Network.BASE,
+    7: Network.MATIC,
+    10: Network.UNI,
+    26: Network.ARC_TESTNET,
 }
 
 
@@ -329,7 +345,10 @@ def generate_salt() -> str:
 
 def usdc_to_units(amount: Decimal) -> int:
     """Convert USDC decimal amount to smallest units (6 decimals)."""
-    return int(amount * Decimal("1000000"))
+    scaled = amount * Decimal("1000000")
+    if scaled != scaled.to_integral_value():
+        raise ValueError(f"USDC amount has more than 6 decimal places: {amount}")
+    return int(scaled)
 
 
 def address_to_bytes32(address: str) -> str:

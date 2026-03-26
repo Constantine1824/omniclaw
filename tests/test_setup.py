@@ -56,6 +56,9 @@ class TestCreateEnvFile:
             content = result.read_text()
             assert "CIRCLE_API_KEY=TEST_API_KEY" in content
             assert f"ENTITY_SECRET={'a' * 64}" in content
+            if os.name != "nt":
+                mode = result.stat().st_mode & 0o777
+                assert mode == 0o600
 
     def test_raises_if_exists_no_overwrite(self) -> None:
         """Test error if file exists and overwrite=False."""

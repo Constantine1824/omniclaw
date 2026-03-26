@@ -195,7 +195,134 @@ Use intents when you need:
 - serialized approval flows
 - explicit reservation of spendable balance
 
-## 8. Enable Trust Checks
+## 8. Receive Nanopayments as a Seller
+
+Nanopayments use EIP-3009 for gas-free USDC transfers. As a seller, you protect FastAPI endpoints so buyers pay before receiving content.
+
+### Setup: Create a Nanopayment Key
+
+```python
+# Generate a new EOA key for receiving payments
+await client.add_key(alias="my-nano-key", private_key="0x...")
+
+# Or use create_agent which sets up nanopayments automatically
+agent = await client.create_agent(
+    name="data-agent",
+    nano_key_alias="data-agent-nano",
+)
+# agent.nano_address is your payment address (e.g. "0x742d...")
+```
+
+### Deposit USDC to Enable Receiving
+
+Your gateway wallet needs a USDC balance to receive payments (it acts as a vault — buyers pay you by sending from their gateway to yours).
+
+```python
+# Check your gateway balance
+balance = await client.get_gateway_balance(nano_key_alias="my-nano-key")
+print(f"Gateway balance: {balance.formatted_total}")
+
+# Deposit from your Circle wallet
+await client.deposit_to_gateway(
+    nano_key_alias="my-nano-key",
+    amount_usdc="100.00",
+    source_wallet_id=wallet.id,
+)
+```
+
+### Protect FastAPI Endpoints
+
+```python
+from fastapi import FastAPI, Depends
+
+app = FastAPI()
+
+@app.get("/premium-data")
+async def get_premium(payment=Depends(client.sell("$0.001"))):
+    payment_info = client.current_payment()
+    return {
+        "data": "premium content",
+        "paid_by": payment_info.payer,
+        "network": payment_info.network,
+    }
+```
+
+The `@client.sell()` decorator:
+
+- Returns a FastAPI `Depends()` that gates the route with x402 payment
+- Checks the `PAYMENT-SIGNATURE` header (base64-encoded EIP-3009 authorization)
+- Verifies the payment amount matches
+- Settles via Circle Gateway
+- Returns `PaymentInfo` including the payer's address
+
+### Get Paid Content
+
+```python
+@app.get("/premium")
+async def premium(payment=Depends(client.sell("$0.50"))):
+    info = client.current_payment()
+    print(f"Paid by {info.payer} on {info.network}")
+    print(f"Transaction: {info.transaction}")
+    return {"content": "..."}
+```
+
+### Withdraw from Gateway
+
+```python
+# Withdraw to your Circle wallet
+await client.withdraw_from_gateway(
+    nano_key_alias="my-nano-key",
+    amount_usdc="50.00",
+)
+
+# Or withdraw to another blockchain address
+await client.withdraw_from_gateway(
+    nano_key_alias="my-nano-key",
+    amount_usdc="25.00",
+    destination_chain=Network.BASE,
+    recipient="0xBaseRecipient",
+)
+```
+
+### Auto-Topup
+
+Automatically refill gateway balance when it drops below a threshold:
+
+```python
+client.configure_nanopayments(
+    auto_topup_enabled=True,
+    auto_topup_threshold="5.00",  # Refill when balance < $5
+    auto_topup_amount="50.00",    # Add $50 each time
+    wallet_manager=gateway_manager,
+)
+```
+
+## 9. Send Nanopayments as a Buyer
+
+Nanopayments are sent automatically when you `pay()` a small amount to a gateway-enabled address:
+
+```python
+# Amounts below the micro threshold use gateway nanopayments
+result = await client.pay(
+    wallet_id=wallet.id,
+    recipient="0xSellerGatewayAddress",
+    amount="0.05",  # Small amount → gas-free nanopayment
+)
+```
+
+Configuration:
+
+```env
+OMNICLAW_NANOPAYMENTS_MICRO_THRESHOLD=1.00  # Amounts < $1 use nanopayments
+```
+
+On the buyer side, OmniClaw:
+1. Checks if the recipient supports gateway nanopayments
+2. Creates an EIP-3009 authorization (off-chain signing)
+3. Sends the authorization as a `PAYMENT-SIGNATURE` header to Circle's settle API
+4. Circle batches and settles on-chain
+
+## 10. Enable Trust Checks
 
 Set a real RPC URL:
 
@@ -220,7 +347,7 @@ Rules:
 - `check_trust=None` uses auto mode
 - `check_trust=False` skips trust evaluation
 
-## 9. Webhooks
+## 11. Webhooks
 
 Use the webhook parser when handling Circle events:
 
@@ -230,7 +357,7 @@ event = client.webhooks.handle(payload, headers)
 
 If signature verification is configured, pass the raw payload and headers so verification can run before parsing.
 
-## 10. Operational Guidance
+## 12. Operational Guidance
 
 - Use Redis in any concurrent deployment.
 - Keep `OMNICLAW_NETWORK` explicit in every deployed environment.

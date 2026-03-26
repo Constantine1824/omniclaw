@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from omniclaw.events import event_emitter
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from omniclaw.core.exceptions import ValidationError
+from omniclaw.core.state_machine import ensure_intent_transition
 from omniclaw.core.types import PaymentIntent, PaymentIntentStatus
+from omniclaw.events import event_emitter
 
 if TYPE_CHECKING:
     from omniclaw.storage.base import StorageBackend
@@ -108,6 +109,7 @@ class PaymentIntentService:
         if not intent:
             raise ValidationError(f"Intent not found: {intent_id}")
 
+        ensure_intent_transition(intent.status, status)
         intent.status = status
         await self._save(intent)
         return intent
@@ -127,6 +129,7 @@ class PaymentIntentService:
         if not intent:
             raise ValidationError(f"Intent not found: {intent_id}")
 
+        ensure_intent_transition(intent.status, PaymentIntentStatus.CANCELED)
         intent.status = PaymentIntentStatus.CANCELED
         if reason:
             intent.cancel_reason = reason

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 from omniclaw.storage.base import StorageBackend, register_storage_backend
@@ -121,13 +122,19 @@ class RedisStorage(StorageBackend):
         # But wait, _make_key uses collection + key
         redis_key = self._make_key(collection, key)
 
-        # INCRBYFLOAT is atomic
-        # Note: Redis stores this as string
-        new_val = await client.incrbyfloat(redis_key, float(amount))
-        
+        # Keep caller-provided decimal precision when sending to Redis.
+        # Avoid converting through Python float first, which can introduce rounding artifacts.
+        try:
+            amount_str = str(Decimal(str(amount)))
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise ValueError(f"Invalid amount for atomic_add: {amount!r}") from exc
+
+        # INCRBYFLOAT is atomic and accepts decimal strings.
+        new_val = await client.execute_command("INCRBYFLOAT", redis_key, amount_str)
+
         # Add to index? Atomic counters might be separate from JSON docs.
         # Existing implementation adds to index. Let's keep it.
-        # But wait, query() expects JSON. 
+        # But wait, query() expects JSON.
         # get() handles non-JSON fallback. So this is fine.
         index_key = f"{self._prefix}:{collection}:_index"
         await client.sadd(index_key, key)
@@ -138,6 +145,14 @@ class RedisStorage(StorageBackend):
     _RELEASE_LOCK_SCRIPT = """
     if redis.call("get", KEYS[1]) == ARGV[1] then
         return redis.call("del", KEYS[1])
+    else
+        return 0
+    end
+    """
+
+    _REFRESH_LOCK_SCRIPT = """
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("expire", KEYS[1], ARGV[2])
     else
         return 0
     end
@@ -163,7 +178,7 @@ class RedisStorage(StorageBackend):
         client = self._get_client()
         redis_key = f"{self._prefix}:locks:{key}"
         token = str(uuid.uuid4())
-        
+
         # SET key token NX EX ttl
         result = await client.set(redis_key, token, nx=True, ex=ttl)
         if result:
@@ -177,13 +192,13 @@ class RedisStorage(StorageBackend):
     ) -> bool:
         """
         Release a lock safely using Lua script.
-        
+
         Only deletes the key if the stored value matches our token,
         preventing accidental release of another caller's lock.
         """
         client = self._get_client()
         redis_key = f"{self._prefix}:locks:{key}"
-        
+
         if token:
             # Safe release: atomic check-and-delete via Lua
             result = await client.eval(self._RELEASE_LOCK_SCRIPT, 1, redis_key, token)
@@ -192,6 +207,18 @@ class RedisStorage(StorageBackend):
             # Fallback: simple delete (legacy callers)
             result = await client.delete(redis_key)
             return result > 0
+
+    async def refresh_lock(
+        self,
+        key: str,
+        token: str,
+        ttl: int = 30,
+    ) -> bool:
+        """Refresh lock TTL if token matches current owner."""
+        client = self._get_client()
+        redis_key = f"{self._prefix}:locks:{key}"
+        result = await client.eval(self._REFRESH_LOCK_SCRIPT, 1, redis_key, token, ttl)
+        return int(result) > 0
 
     async def query(
         self,

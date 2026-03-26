@@ -47,13 +47,16 @@ classifiers = [
 ]
 
 dependencies = [
-    "circle-developer-controlled-wallets>=9.1.0",
-    "pydantic>=2.12.0",
-    "httpx>=0.28.0",
-    "python-dotenv>=1.2.0",
-    "cryptography>=44.0.0",
-    "redis>=7.1.0",
-    "tenacity>=8.2.0",
+    "circle-developer-controlled-wallets==9.1.0",
+    "pydantic==2.12.0",
+    "httpx==0.28.0",
+    "python-dotenv==1.2.0",
+    "cryptography==44.0.0",
+    "redis==7.1.0",
+    "tenacity==8.2.0",
+    # x402 official SDK and signing
+    "x402[httpx]==0.1.0",
+    "eth-account==0.12.0",
 ]
 
 [project.optional-dependencies]
@@ -79,6 +82,12 @@ Issues = "https://github.com/omnuron/omniclaw/issues"
 
 [project.scripts]
 omniclaw = "omniclaw.cli:main"
+
+[dependency-groups]
+dev = [
+    "python-dotenv>=1.2.1",
+    "uvicorn>=0.42.0",
+]
 
 
 

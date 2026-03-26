@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from omniclaw.core.types import Network
 
-
 # ───────────────────────────────────────────────────────────────────
 # Deployed Contract Addresses
 # ───────────────────────────────────────────────────────────────────

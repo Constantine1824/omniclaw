@@ -180,7 +180,7 @@ class Ledger:
         # Use a coarse lock on the entry ID to prevent Read-Modify-Write race conditions
         # if multiple async updates hit the ledger for the same transaction simultaneously.
         lock_token = await self._storage.acquire_lock(f"lock:ledger:{entry_id}", ttl=10)
-        
+
         try:
             data = await self._storage.get(self.COLLECTION, entry_id)
             if not data:

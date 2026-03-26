@@ -11,7 +11,9 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from omniclaw.core.exceptions import InsufficientBalanceError, WalletError
+from omniclaw.core.idempotency import derive_idempotency_key
 from omniclaw.core.logging import get_logger
+from omniclaw.core.state_machine import is_irreversible_success_status
 from omniclaw.core.types import (
     FeeLevel,
     Network,
@@ -55,12 +57,22 @@ class TransferAdapter(ProtocolAdapter):
         """Check if recipient is a valid blockchain address for current network."""
         # Determine network context (Source Wallet wins over Global Config)
         network = source_network or self._config.network
+        try:
+            network = network if isinstance(network, Network) else Network.from_string(str(network))
+        except Exception:
+            return False
 
         dest_chain = destination_chain
         if dest_chain:
-            d_str = str(dest_chain).upper()
-            n_str = str(network).upper()
-            if d_str != n_str:
+            try:
+                dest_chain = (
+                    dest_chain
+                    if isinstance(dest_chain, Network)
+                    else Network.from_string(str(dest_chain))
+                )
+            except Exception:
+                return False
+            if dest_chain != network:
                 return False
 
         if network.is_solana():
@@ -94,6 +106,15 @@ class TransferAdapter(ProtocolAdapter):
         **kwargs: Any,
     ) -> PaymentResult:
         """Execute a direct USDC transfer."""
+        canonical_idempotency_key = idempotency_key or derive_idempotency_key(
+            "transfer",
+            wallet_id,
+            recipient,
+            str(amount),
+            purpose,
+            destination_chain.value if hasattr(destination_chain, "value") else destination_chain,
+            source_network.value if hasattr(source_network, "value") else source_network,
+        )
         try:
             transfer_result = await self._wallet_service.transfer(
                 wallet_id=wallet_id,
@@ -103,7 +124,7 @@ class TransferAdapter(ProtocolAdapter):
                 check_balance=True,
                 wait_for_completion=wait_for_completion,
                 timeout_seconds=timeout_seconds,
-                idempotency_key=idempotency_key,
+                idempotency_key=canonical_idempotency_key,
             )
         except (WalletError, InsufficientBalanceError) as e:
             return PaymentResult(
@@ -131,16 +152,17 @@ class TransferAdapter(ProtocolAdapter):
                 error=transfer_result.error,
             )
 
+        strict_settlement = bool(getattr(self._config, "payment_strict_settlement", True))
         tx = transfer_result.transaction
-        status = PaymentStatus.PROCESSING
+        status = PaymentStatus.PENDING_SETTLEMENT if strict_settlement else PaymentStatus.PROCESSING
         if tx:
             if tx.state == TransactionState.COMPLETE:
-                status = PaymentStatus.COMPLETED
+                status = PaymentStatus.SETTLED if strict_settlement else PaymentStatus.COMPLETED
             elif tx.state == TransactionState.FAILED or tx.is_terminal():
-                status = PaymentStatus.FAILED
+                status = PaymentStatus.FAILED_FINAL if strict_settlement else PaymentStatus.FAILED
 
         return PaymentResult(
-            success=True,
+            success=is_irreversible_success_status(status) if strict_settlement else status != PaymentStatus.FAILED,
             transaction_id=tx.id if tx else None,
             blockchain_tx=transfer_result.tx_hash,
             amount=amount,
@@ -151,7 +173,7 @@ class TransferAdapter(ProtocolAdapter):
                 "purpose": purpose,
                 "fee_level": fee_level.value,
                 "tx_state": tx.state.value if tx else None,
-                "idempotency_key": idempotency_key,
+                "idempotency_key": canonical_idempotency_key,
                 "destination_chain": destination_chain,
                 "source_network": source_network,
             },

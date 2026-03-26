@@ -70,6 +70,8 @@ class TestConfig:
             "ENTITY_SECRET": "env_entity_secret",
             "OMNICLAW_NETWORK": "ARC-TESTNET",
             "OMNICLAW_DEFAULT_WALLET": "wallet-xyz",
+            "OMNICLAW_STRICT_SETTLEMENT": "true",
+            "OMNICLAW_AUTO_RECONCILE_PENDING_SETTLEMENTS": "true",
         }
 
         with patch.dict(os.environ, env_vars, clear=False):
@@ -79,6 +81,8 @@ class TestConfig:
         assert config.entity_secret == "env_entity_secret"
         assert config.network == Network.ARC_TESTNET
         assert config.default_wallet_id == "wallet-xyz"
+        assert config.payment_strict_settlement is True
+        assert config.auto_reconcile_pending_settlements is True
 
     def test_from_env_missing_api_key_raises(self) -> None:
         """Test from_env raises when API key not set."""

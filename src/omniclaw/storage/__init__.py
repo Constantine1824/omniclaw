@@ -49,7 +49,13 @@ def get_storage(backend_name: str | None = None) -> StorageBackend:
 
     Raises:
         ValueError: If backend name is unknown
+
+    Warning:
+        Using 'memory' backend in production will lose all state on process restart.
+        For production, use 'redis' backend: OMNICLAW_STORAGE_BACKEND=redis
     """
+    import warnings
+
     if backend_name is None:
         backend_name = os.environ.get("OMNICLAW_STORAGE_BACKEND", "memory")
 
@@ -60,6 +66,30 @@ def get_storage(backend_name: str | None = None) -> StorageBackend:
         raise ValueError(
             f"Unknown storage backend: '{backend_name}'. Available: {', '.join(available)}"
         )
+
+    # Warn about memory storage in production
+    if backend_name == "memory":
+        env = os.environ.get("OMNICLAW_ENV", "").lower()
+        if env in ("production", "prod", "mainnet"):
+            raise ValueError(
+                "CRITICAL: Cannot use memory storage backend in production. "
+                "All state will be lost on process restart, causing budget bypass and fund loss. "
+                "Use Redis: OMNICLAW_STORAGE_BACKEND=redis OMNICLAW_REDIS_URL=redis://..."
+            )
+        elif env not in ("", "test", "development", "dev"):
+            warnings.warn(
+                f"Using memory storage backend with OMNICLAW_ENV={env}. "
+                "For production use, configure Redis: OMNICLAW_STORAGE_BACKEND=redis",
+                UserWarning,
+                stacklevel=2,
+            )
+        else:
+            warnings.warn(
+                "Using memory storage backend - state will be lost on process restart. "
+                "For production, use Redis: OMNICLAW_STORAGE_BACKEND=redis",
+                UserWarning,
+                stacklevel=2,
+            )
 
     return backend_class()
 

@@ -10,9 +10,9 @@ matching §7.1 of the system design spec:
 
 from __future__ import annotations
 
-import json
 import time
-from typing import Any, Callable, Awaitable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 from omniclaw.core.logging import get_logger
 from omniclaw.storage.base import StorageBackend

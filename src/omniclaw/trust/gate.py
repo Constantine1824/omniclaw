@@ -24,7 +24,6 @@ from omniclaw.identity.types import (
     ReputationScore,
     TrustCheckResult,
     TrustPolicy,
-    TrustVerdict,
 )
 from omniclaw.trust.cache import TrustCache
 from omniclaw.trust.policy import PolicyEngine
@@ -85,7 +84,7 @@ class TrustGate:
         self._policy_engine = PolicyEngine()
         self._scoring = ReputationAggregator()
         self._network = network
-        self._default_policy = default_policy or TrustPolicy.permissive()
+        self._default_policy = default_policy or TrustPolicy.standard()
         self._wallet_policies: dict[str, TrustPolicy] = {}
         self._storage = storage
 

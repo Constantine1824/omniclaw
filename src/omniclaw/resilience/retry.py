@@ -7,7 +7,8 @@ Standard retry policies for payment infrastructure.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 try:
     from tenacity import (
@@ -23,7 +24,7 @@ except ImportError:
         def decorator(f):
             return f
         return decorator
-    
+
     AsyncRetrying = None
     retry_if_exception = None
     stop_after_attempt = None

@@ -16,7 +16,10 @@ def create_access_token(subject: Union[str, Any], expires_delta: timedelta = Non
             minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
         )
     to_encode = {"exp": expire, "sub": str(subject)}
-    encoded_jwt = jwt.encode(to_encode, settings.SECRET_KEY, algorithm=ALGORITHM)
+    jwt_secret = settings.MCP_JWT_SECRET.get_secret_value() if settings.MCP_JWT_SECRET else None
+    if not jwt_secret:
+        raise ValueError("MCP_JWT_SECRET is required to create JWT access tokens")
+    encoded_jwt = jwt.encode(to_encode, jwt_secret, algorithm=ALGORITHM)
     return encoded_jwt
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
@@ -24,4 +27,3 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
-

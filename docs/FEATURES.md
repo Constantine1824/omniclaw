@@ -114,6 +114,66 @@ Current runtime rules:
 - explicit trust checks require a real `OMNICLAW_RPC_URL`
 - simulation and payment execution follow the same trust gating rules
 
+### Nanopayments (EIP-3009)
+
+Nanopayments enable gas-free USDC transfers via Circle's Gateway nanopayments protocol, built on EIP-3009. They are designed for micro-transactions where gas costs would make regular transfers impractical.
+
+#### Architecture
+
+The nanopayments stack is organized under [protocols/nanopayments/](../src/omniclaw/protocols/nanopayments/):
+
+- `signing.py` — EIP-3009 signature creation (`EIP3009Signer`) and verification
+- `types.py` — `PaymentRequirementsKind`, `PaymentPayload`, `SettleResponse`, `PaymentInfo`, `ResourceInfo`, `SupportedKind`, `GatewayBalance` types
+- `client.py` — `NanopaymentClient` wrapping Circle's Gateway API (settle, verify, get_supported, check_balance)
+- `keys.py` — `NanoKeyVault` for encrypted key management (EOA private keys)
+- `middleware.py` — `GatewayMiddleware` (seller-side x402 gate, `@agent.sell()` equivalent)
+- `adapter.py` — `NanopaymentAdapter` (buyer-side payment execution)
+- `wallet.py` — `GatewayWalletManager` (on-chain deposit/withdraw via `depositWithAuthorization`)
+- `exceptions.py` — `InsufficientBalanceError`, `SettlementError`, etc.
+
+#### Payment Flow
+
+1. **Buyer** creates a `PaymentRequirementsKind` (network, amount, seller address)
+2. **Buyer** signs with `EIP3009Signer` → `PaymentPayload` (off-chain, no gas)
+3. **Buyer** base64-encodes payload → sends as `PAYMENT-SIGNATURE` header
+4. **Seller** gateway receives header → calls `gateway.handle(request_headers, price)`
+5. **Seller** gateway calls `client.settle(payload, requirements)` → Circle settles on-chain
+6. **Result** is `SettleResponse(success, transaction, payer, error_reason)`
+
+The on-chain settlement is batched — multiple nanopayments settle in a single transaction, so gas costs are amortized across many payments.
+
+#### Buyer vs Seller
+
+- **Buyer**: Uses `NanopaymentAdapter` and `NanopaymentClient` to create and send payments via `client.pay()`
+- **Seller**: Uses `GatewayMiddleware` and `@omniclaw.sell()` to protect FastAPI endpoints
+
+#### Key Isolation
+
+Agents hold only a `nano_key_alias` (string reference). The actual EOA private key is encrypted in the NanoKeyVault. This means:
+
+- Compromised alias gives no access to funds
+- Keys can be rotated without changing the agent's public address
+- Multiple agents can share the same key or have dedicated keys
+
+#### OmniClaw Integration
+
+`OmniClaw` wires nanopayments into the SDK surface:
+
+- `client.vault` → `NanoKeyVault` for key management
+- `client.nanopayment_adapter` → `NanopaymentAdapter` for buyer payments
+- `client.gateway()` → `GatewayMiddleware` for seller endpoints
+- `client.sell(price)` → FastAPI `Depends()` for `@agent.sell()`
+- `client.current_payment()` → `PaymentInfo` within decorated routes
+- `client.get_gateway_balance()` → gateway wallet balance
+- `client.configure_nanopayments()` → auto-topup settings
+
+Relevant modules:
+
+- [protocols/nanopayments/middleware.py](../src/omniclaw/protocols/nanopayments/middleware.py)
+- [protocols/nanopayments/adapter.py](../src/omniclaw/protocols/nanopayments/adapter.py)
+- [protocols/nanopayments/keys.py](../src/omniclaw/protocols/nanopayments/keys.py)
+- [protocols/nanopayments/client.py](../src/omniclaw/protocols/nanopayments/client.py)
+
 ### Storage
 
 Storage backends live in [storage/](../src/omniclaw/storage).

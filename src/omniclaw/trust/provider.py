@@ -20,7 +20,6 @@ For fallback (spec §7.2), pass comma-separated URLs:
 from __future__ import annotations
 
 import os
-from typing import Any
 
 import httpx
 
@@ -28,7 +27,6 @@ from omniclaw.core.erc8004 import (
     get_identity_registry,
     get_reputation_registry,
     get_validation_registry,
-    is_erc8004_supported,
 )
 from omniclaw.core.logging import get_logger
 from omniclaw.identity.types import FeedbackSignal
@@ -139,7 +137,13 @@ class ERC8004Provider:
     def _encode_address(addr: str) -> str:
         """Encode address as 32-byte hex (left-padded)."""
         addr_clean = addr.lower().replace("0x", "")
-        return f"{addr_clean:>064}"
+        return addr_clean.zfill(64)
+
+    @staticmethod
+    def _encode_bytes32(hex_value: str) -> str:
+        """Encode hex string as exactly 32 bytes."""
+        value_clean = hex_value.lower().replace("0x", "")
+        return value_clean.zfill(64)
 
     @staticmethod
     def _decode_address(hex_data: str) -> str:
@@ -583,7 +587,7 @@ class ERC8004Provider:
 
         try:
             # Build minimum calldata with empty filters
-            selector = _FUNCTION_SELECTORS["readAllFeedback(uint256,address[],string,string,bool)"]
+            _FUNCTION_SELECTORS["readAllFeedback(uint256,address[],string,string,bool)"]
 
             # This is a complex ABI encoding with multiple dynamic params.
             # For reliability, fall back to iterative approach if encoding
@@ -606,9 +610,8 @@ class ERC8004Provider:
                     if len(signals) >= max_signals:
                         break
                     signal = await self.read_feedback(agent_id, client, idx, network)
-                    if signal:
-                        if include_revoked or not signal.is_revoked:
-                            signals.append(signal)
+                    if signal and (include_revoked or not signal.is_revoked):
+                        signals.append(signal)
 
             return signals
 
@@ -635,8 +638,7 @@ class ERC8004Provider:
 
         selector = _FUNCTION_SELECTORS["getValidationStatus(bytes32)"]
         # Pad request_hash to 32 bytes
-        hash_clean = request_hash.lower().replace("0x", "")
-        data = f"0x{selector}{hash_clean:>064}"
+        data = f"0x{selector}{self._encode_bytes32(request_hash)}"
         result = await self._eth_call(registry, data)
         if not result or len(result) < 384:
             return None

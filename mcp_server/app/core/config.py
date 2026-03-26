@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     MCP_AUTH_TOKEN: SecretStr | None = None
     MCP_JWT_SECRET: SecretStr | None = None
     MCP_REQUIRE_AUTH: bool = True
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+
+    # Webhook verification
+    OMNICLAW_WEBHOOK_VERIFICATION_KEY: SecretStr | None = None
 
     # CORS
     BACKEND_CORS_ORIGINS: List[AnyHttpUrl] = []

@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from omniclaw.storage.base import StorageBackend
@@ -107,14 +107,24 @@ class ReservationService:
                         await self.release(res.get("intent_id", ""))
                         continue
                 except Exception:
-                    # Ignore ill-formatted edge case logs until later to avoid exceptions on balance counts
-                    pass
+                    logger.warning(
+                        "Malformed reservation expiry for intent %s; releasing reservation defensively.",
+                        res.get("intent_id"),
+                    )
+                    await self.release(res.get("intent_id", ""))
+                    continue
 
             amount_str = res.get("amount", "0")
             try:
                 total += Decimal(amount_str)
             except Exception as e:
-                logger.warning(f"Invalid decimal amount in reservation {res.get('_key')}: {amount_str}: {e}")
+                message = (
+                    "Corrupted reservation amount detected "
+                    f"(intent={res.get('intent_id')}, value={amount_str!r}): {e}"
+                )
+                logger.error(message)
+                # Fail closed: do not continue if reservation data is corrupted.
+                raise ValueError(message) from e
 
         logger.debug(f"Wallet {wallet_id} has {total} in active reservations")
         return total

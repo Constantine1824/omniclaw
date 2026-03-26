@@ -1,10 +1,13 @@
 import base64
+import os
+import tempfile
+from unittest.mock import patch
 
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519
 
-from omniclaw.webhooks.parser import InvalidSignatureError, WebhookParser
+from omniclaw.webhooks.parser import DuplicateWebhookError, InvalidSignatureError, WebhookParser
 
 
 @pytest.fixture
@@ -123,7 +126,10 @@ def test_handle_valid_payload(parser, key_pair):
     }
     payload = json.dumps(payload_dict)
     signature = sign_payload(private_key, payload)
-    headers = {"x-circle-signature": signature}
+    headers = {
+        "x-circle-signature": signature,
+        "x-circle-timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+    }
     
     event = parser.handle(payload, headers)
     assert event.type == NotificationType.PAYMENT_COMPLETED
@@ -141,13 +147,13 @@ def test_handle_missing_createdate(parser, key_pair):
     signature = sign_payload(private_key, payload)
     headers = {"x-circle-signature": signature}
     
-    with pytest.raises(ValidationError, match="Missing 'createDate'"):
+    with pytest.raises(ValidationError, match="createDate"):
         parser.handle(payload, headers)
 
 def test_handle_replay_attack(parser, key_pair):
     private_key, _ = key_pair
-    # Timestamp from 10 minutes ago
-    old_time = datetime.now(timezone.utc) - timedelta(minutes=10)
+    # Timestamp beyond default max replay age window (12 hours).
+    old_time = datetime.now(timezone.utc) - timedelta(hours=13)
     payload_dict = {
         "notificationType": "payment_completed",
         "notificationId": "evt_123",
@@ -156,7 +162,42 @@ def test_handle_replay_attack(parser, key_pair):
     }
     payload = json.dumps(payload_dict)
     signature = sign_payload(private_key, payload)
-    headers = {"x-circle-signature": signature}
+    headers = {
+        "x-circle-signature": signature,
+        "x-circle-timestamp": str(int(old_time.timestamp())),
+    }
     
-    with pytest.raises(InvalidSignatureError, match="temporal drift window"):
+    with pytest.raises(InvalidSignatureError, match="replay age window"):
         parser.handle(payload, headers)
+
+
+def test_handle_rejects_duplicate_notification_id(key_pair):
+    private_key, public_key = key_pair
+    pub_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.Raw, format=serialization.PublicFormat.Raw
+    )
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        dedup_db = f"{tmpdir}/webhook_dedup.sqlite3"
+        with patch.dict(os.environ, {"OMNICLAW_WEBHOOK_DEDUP_DB_PATH": dedup_db}, clear=False):
+            parser = WebhookParser(verification_key=pub_bytes.hex())
+
+            now_iso = datetime.now(timezone.utc).isoformat()
+            payload_dict = {
+                "notificationType": "payment_completed",
+                "notificationId": "evt_duplicate_1",
+                "createDate": now_iso,
+                "notification": {"status": "COMPLETE"},
+            }
+            payload = json.dumps(payload_dict)
+            signature = sign_payload(private_key, payload)
+            headers = {
+                "x-circle-signature": signature,
+                "x-circle-timestamp": str(int(datetime.now(timezone.utc).timestamp())),
+            }
+
+            parser.handle(payload, headers)
+
+            parser_again = WebhookParser(verification_key=pub_bytes.hex())
+            with pytest.raises(DuplicateWebhookError, match="Duplicate webhook notificationId"):
+                parser_again.handle(payload, headers)

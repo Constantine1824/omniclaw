@@ -154,7 +154,7 @@ async def test_execute_cctp_forces_mint_on_arc(mock_config, mock_wallet_service)
              )
              
              assert result.success is True
-             assert result.status.value == "completed"
+             assert result.status.value == "settled"
              # Check metadata contains mint info
              assert result.metadata["cctp_flow"] == "burn_attestation_mint"
              assert result.metadata["mint_tx_hash"] == "0xmint"

@@ -111,6 +111,8 @@ OmniClaw(
 - `intents`
 - `ledger`
 - `webhooks`
+- `vault` — NanoKeyVault for managing nanopayment EOA keys
+- `nanopayment_adapter` — NanopaymentAdapter for buyer-side nanopayments
 
 ### Wallet Methods
 
@@ -217,6 +219,119 @@ await client.list_guards(wallet_id)
 await client.list_guards_for_set(wallet_set_id)
 ```
 
+### Nanopayments Methods
+
+Nanopayments use EIP-3009 for gas-free USDC transfers on Circle Gateway. They work alongside regular payments — micro-transactions route through the gateway while larger payments use standard transfers.
+
+#### Seller: Receiving Nanopayments
+
+```python
+# Get the GatewayMiddleware for protecting endpoints
+await client.gateway()  # -> GatewayMiddleware
+
+# Decorator factory for marking paid FastAPI routes
+client.sell(price: str)  # -> Depends() for FastAPI
+
+# Get current payment info inside a @sell() decorated route
+client.current_payment()  # -> PaymentInfo(payer, amount, network, transaction)
+```
+
+Example (FastAPI seller):
+
+```python
+from fastapi import Depends
+
+@app.get("/premium")
+async def premium(payment=Depends(omniclaw.sell("$0.001"))):
+    payment_info = omniclaw.current_payment()
+    return {"data": "paid content", "paid_by": payment_info.payer}
+```
+
+#### Buyer: Sending Nanopayments
+
+```python
+# Execute a nanopayment to a seller's address
+await client.pay(
+    wallet_id=wallet.id,
+    recipient="0xSellerAddress",
+    amount="0.001",  # Small amount - uses gateway nanopayment
+)
+# Routes to Circle Gateway nanopayment if amount < nanopayments_micro_threshold
+```
+
+#### Key Management (NanoKeyVault)
+
+```python
+# Generate a new EOA key for nanopayments
+await client.add_key(alias="agent-nano", private_key="0x...")
+
+# Get the EOA address for a key
+await client.get_key_address(alias="agent-nano")  # -> "0x..."
+
+# Sign data with a key
+await client.sign(alias="agent-nano", data=b"...")  # -> hex signature
+
+# Delete a key
+await client.delete_key(alias="agent-nano")
+```
+
+#### Gateway Wallet Management
+
+```python
+# Get gateway balance for a nanopayment key
+await client.get_gateway_balance(nano_key_alias="agent-nano")
+# -> GatewayBalance(total, available, formatted_total, formatted_available)
+
+# Deposit USDC to gateway wallet (enables receiving nanopayments)
+await client.deposit_to_gateway(
+    nano_key_alias="agent-nano",
+    amount_usdc="10.00",
+    source_wallet_id="wallet-id",
+)
+
+# Withdraw USDC from gateway wallet
+await client.withdraw_from_gateway(
+    nano_key_alias="agent-nano",
+    amount_usdc="5.00",
+    destination_chain=None,  # Optional: withdraw to another chain
+    recipient="0xDestination",  # Optional: specific recipient
+)
+
+# Configure auto-topup for gateway balance
+client.configure_nanopayments(
+    auto_topup_enabled=True,
+    auto_topup_threshold="1.00",
+    auto_topup_amount="10.00",
+    wallet_manager=gateway_wallet_manager,
+)
+```
+
+#### Agent Creation with Nanopayments
+
+```python
+# Create an agent wallet with nanopayment support
+agent_wallet = await client.create_agent(
+    name="data-agent",
+    nano_key_alias="data-agent-nano",  # Optional: specific key alias
+)
+# agent_wallet.wallet_id - Circle wallet for deposits
+# agent_wallet.nano_key_alias - Vault key for gateway
+# agent_wallet.nano_address - EOA address for receiving nanopayments
+```
+
+### Nanopayments Environment Variables
+
+```env
+OMNICLAW_NANOPAYMENTS_ENABLED=true
+OMNICLAW_NANOPAYMENTS_ENVIRONMENT=testnet  # or "mainnet"
+OMNICLAW_NANOPAYMENTS_MICRO_THRESHOLD=1.00
+OMNICLAW_NANOPAYMENTS_DEFAULT_KEY_ALIAS=my-nano-key
+OMNICLAW_NANOPAYMENTS_AUTO_TOPUP=true
+OMNICLAW_NANOPAYMENTS_TOPUP_THRESHOLD=1.00
+OMNICLAW_NANOPAYMENTS_TOPUP_AMOUNT=10.00
+OMNICLAW_NANOPAYMENTS_DEFAULT_NETWORK=eip155:5042002
+```
+
 ## `WalletService`
 
 Accessible through `client.wallet`.
@@ -287,3 +402,7 @@ Important exported exceptions:
 - `NetworkError`
 - `X402Error`
 - `ValidationError`
+- `NanopaymentNotInitializedError`
+- `InsufficientBalanceError`
+- `SettlementError`
+- `NoDefaultKeyError`

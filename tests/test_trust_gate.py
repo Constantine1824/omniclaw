@@ -34,6 +34,7 @@ from omniclaw.trust.scoring import ReputationAggregator
 # Trust Policy Tests
 # ─────────────────────────────────────────────────────────────────
 
+
 class TestTrustPolicy:
     """Tests for TrustPolicy presets and configuration."""
 
@@ -83,14 +84,24 @@ class TestTrustPolicy:
 # WTS Scoring Tests
 # ─────────────────────────────────────────────────────────────────
 
+
 class TestReputationAggregator:
     """Tests for the Weighted Trust Score algorithm."""
 
     def setup_method(self):
         self.scorer = ReputationAggregator()
 
-    def _make_signal(self, value=80, decimals=0, tag1="", tag2="",
-                     client="0xClient", agent_id=1, index=1, revoked=False):
+    def _make_signal(
+        self,
+        value=80,
+        decimals=0,
+        tag1="",
+        tag2="",
+        client="0xClient",
+        agent_id=1,
+        index=1,
+        revoked=False,
+    ):
         return FeedbackSignal(
             agent_id=agent_id,
             client_address=client,
@@ -174,9 +185,7 @@ class TestReputationAggregator:
             self._make_signal(value=50, client="0xNormal", index=1),
         ]
         # With boost, verified submitter's score weighs more
-        score = self.scorer.compute_wts(
-            signals, verified_submitters={"0xVerified"}
-        )
+        score = self.scorer.compute_wts(signals, verified_submitters={"0xVerified"})
         # Verified count should be tracked
         assert score.verified_submitter_count == 1
 
@@ -208,6 +217,7 @@ class TestReputationAggregator:
 # Policy Engine Tests
 # ─────────────────────────────────────────────────────────────────
 
+
 class TestPolicyEngine:
     """Tests for the 10-check policy evaluation."""
 
@@ -224,7 +234,9 @@ class TestPolicyEngine:
 
     def _make_reputation(self, wts=80, sample_size=5, flags=None, new_agent=False):
         return ReputationScore(
-            wts=wts, sample_size=sample_size, new_agent=new_agent,
+            wts=wts,
+            sample_size=sample_size,
+            new_agent=new_agent,
             flags=flags or [],
         )
 
@@ -250,8 +262,11 @@ class TestPolicyEngine:
         identity = self._make_identity(organization="trusted-corp")
         reputation = self._make_reputation(wts=10)  # Very low
         result = self.engine.evaluate(
-            identity=identity, reputation=reputation,
-            amount=Decimal("10"), recipient_address="0xA", policy=policy,
+            identity=identity,
+            reputation=reputation,
+            amount=Decimal("10"),
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.APPROVED
 
@@ -259,8 +274,11 @@ class TestPolicyEngine:
         """Identity required + no identity → BLOCKED."""
         policy = TrustPolicy(identity_required=True)
         result = self.engine.evaluate(
-            identity=None, reputation=None,
-            amount=Decimal("10"), recipient_address="0xA", policy=policy,
+            identity=None,
+            reputation=None,
+            amount=Decimal("10"),
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.BLOCKED
         assert result.block_reason == "NO_IDENTITY"
@@ -272,7 +290,9 @@ class TestPolicyEngine:
         result = self.engine.evaluate(
             identity=self._make_identity(),
             reputation=reputation,
-            amount=Decimal("10"), recipient_address="0xA", policy=policy,
+            amount=Decimal("10"),
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.BLOCKED
         assert result.block_reason == "FRAUD_TAG"
@@ -284,7 +304,9 @@ class TestPolicyEngine:
         result = self.engine.evaluate(
             identity=self._make_identity(),
             reputation=reputation,
-            amount=Decimal("10"), recipient_address="0xA", policy=policy,
+            amount=Decimal("10"),
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.HELD
         assert result.block_reason == "NEW_AGENT"
@@ -296,7 +318,9 @@ class TestPolicyEngine:
         result = self.engine.evaluate(
             identity=self._make_identity(),
             reputation=reputation,
-            amount=Decimal("10"), recipient_address="0xA", policy=policy,
+            amount=Decimal("10"),
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.APPROVED
 
@@ -307,7 +331,9 @@ class TestPolicyEngine:
         result = self.engine.evaluate(
             identity=self._make_identity(),
             reputation=reputation,
-            amount=Decimal("10"), recipient_address="0xA", policy=policy,
+            amount=Decimal("10"),
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.HELD
         assert result.block_reason == "INSUFFICIENT_FEEDBACK"
@@ -319,7 +345,9 @@ class TestPolicyEngine:
         result = self.engine.evaluate(
             identity=self._make_identity(),
             reputation=reputation,
-            amount=Decimal("10"), recipient_address="0xA", policy=policy,
+            amount=Decimal("10"),
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.BLOCKED
         assert result.block_reason == "LOW_WTS"
@@ -335,7 +363,8 @@ class TestPolicyEngine:
             identity=self._make_identity(),
             reputation=reputation,
             amount=Decimal("1000"),
-            recipient_address="0xA", policy=policy,
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.HELD
         assert result.block_reason == "HIGH_VALUE_WTS_FAIL"
@@ -351,7 +380,8 @@ class TestPolicyEngine:
             identity=self._make_identity(),
             reputation=reputation,
             amount=Decimal("100"),  # Below threshold
-            recipient_address="0xA", policy=policy,
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.APPROVED
 
@@ -361,8 +391,11 @@ class TestPolicyEngine:
         identity = self._make_identity(attestations=["kyb"])  # Missing soc2
         reputation = self._make_reputation(wts=90, sample_size=10)
         result = self.engine.evaluate(
-            identity=identity, reputation=reputation,
-            amount=Decimal("10"), recipient_address="0xA", policy=policy,
+            identity=identity,
+            reputation=reputation,
+            amount=Decimal("10"),
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.HELD
         assert "MISSING_ATTESTATIONS:soc2" in result.block_reason
@@ -376,8 +409,11 @@ class TestPolicyEngine:
         identity = self._make_identity()
         reputation = self._make_reputation(wts=85, sample_size=10)
         result = self.engine.evaluate(
-            identity=identity, reputation=reputation,
-            amount=Decimal("10"), recipient_address="0xA", policy=policy,
+            identity=identity,
+            reputation=reputation,
+            amount=Decimal("10"),
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.APPROVED
 
@@ -385,8 +421,11 @@ class TestPolicyEngine:
         """No identity, permissive policy → APPROVED."""
         policy = TrustPolicy.permissive()
         result = self.engine.evaluate(
-            identity=None, reputation=None,
-            amount=Decimal("10"), recipient_address="0xA", policy=policy,
+            identity=None,
+            reputation=None,
+            amount=Decimal("10"),
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.APPROVED
 
@@ -396,8 +435,11 @@ class TestPolicyEngine:
         identity = self._make_identity(attestations=["kyb"])
         reputation = self._make_reputation(wts=90, sample_size=10)
         result = self.engine.evaluate(
-            identity=identity, reputation=reputation,
-            amount=Decimal("10"), recipient_address="0xA", policy=policy,
+            identity=identity,
+            reputation=reputation,
+            amount=Decimal("10"),
+            recipient_address="0xA",
+            policy=policy,
         )
         assert result.verdict == TrustVerdict.APPROVED
 
@@ -406,12 +448,14 @@ class TestPolicyEngine:
 # Trust Cache Tests
 # ─────────────────────────────────────────────────────────────────
 
+
 class TestTrustCache:
     """Tests for the TTL-based trust cache."""
 
     @pytest.fixture
     def storage(self):
         from omniclaw.storage.memory import InMemoryStorage
+
         return InMemoryStorage()
 
     @pytest.fixture
@@ -437,6 +481,7 @@ class TestTrustCache:
         await cache.set("1", "0xABC", "identity", {"name": "Agent"}, ttl=0)
         # TTL=0 means already expired
         import time
+
         time.sleep(0.01)
         result = await cache.get("1", "0xABC", "identity")
         assert result is None
@@ -480,6 +525,7 @@ class TestTrustCache:
 # Agent Identity Type Tests
 # ─────────────────────────────────────────────────────────────────
 
+
 class TestAgentIdentity:
     """Tests for AgentIdentity parsing."""
 
@@ -491,7 +537,11 @@ class TestAgentIdentity:
             "description": "A test agent",
             "image": "https://example.com/agent.png",
             "services": [
-                {"name": "A2A", "endpoint": "https://agent.example/.well-known/agent-card.json", "version": "0.3.0"},
+                {
+                    "name": "A2A",
+                    "endpoint": "https://agent.example/.well-known/agent-card.json",
+                    "version": "0.3.0",
+                },
                 {"name": "MCP", "endpoint": "https://mcp.agent.example/"},
             ],
             "x402Support": True,
@@ -514,8 +564,11 @@ class TestAgentIdentity:
     def test_feedback_signal_normalization(self):
         """FeedbackSignal normalizes value/decimals correctly."""
         signal = FeedbackSignal(
-            agent_id=1, client_address="0x", feedback_index=1,
-            value=9977, value_decimals=2,
+            agent_id=1,
+            client_address="0x",
+            feedback_index=1,
+            value=9977,
+            value_decimals=2,
         )
         assert signal.normalized_score == 99.77
 
@@ -539,31 +592,37 @@ class TestAgentIdentity:
 # ERC-8004 Contract Helpers Tests
 # ─────────────────────────────────────────────────────────────────
 
+
 class TestERC8004Helpers:
     """Tests for core/erc8004.py helpers."""
 
     def test_deployed_addresses_exist(self):
         from omniclaw.core.erc8004 import get_identity_registry, get_reputation_registry
+
         assert get_identity_registry("ETH") == "0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
         assert get_reputation_registry("ETH") == "0x8004BAa17C55a88189AE136b182e5fdA19dE9b63"
 
     def test_base_sepolia_addresses(self):
         from omniclaw.core.erc8004 import get_identity_registry, get_reputation_registry
+
         assert get_identity_registry("BASE-SEPOLIA") is not None
         assert get_reputation_registry("BASE-SEPOLIA") is not None
 
     def test_agent_registry_string(self):
         from omniclaw.core.erc8004 import build_agent_registry_string
+
         result = build_agent_registry_string("ETH")
         assert result == "eip155:1:0x8004A169FB4a3325136EB29fA0ceB6D2e539a432"
 
     def test_unsupported_network(self):
         from omniclaw.core.erc8004 import is_erc8004_supported
+
         assert is_erc8004_supported("ETH") is True
         assert is_erc8004_supported("UNSUPPORTED") is False
 
     def test_abi_structures(self):
         from omniclaw.core.erc8004 import IDENTITY_REGISTRY_ABI, REPUTATION_REGISTRY_ABI
+
         # Identity should have ownerOf, tokenURI, register, etc.
         func_names = {f["name"] for f in IDENTITY_REGISTRY_ABI}
         assert "ownerOf" in func_names
@@ -581,6 +640,7 @@ class TestERC8004Helpers:
     def test_get_validation_registry(self):
         """get_validation_registry returns None (not deployed yet)."""
         from omniclaw.core.erc8004 import get_validation_registry
+
         # Validation contracts not yet deployed — should return None
         assert get_validation_registry("ETH") is None
         assert get_validation_registry("UNSUPPORTED") is None
@@ -589,6 +649,7 @@ class TestERC8004Helpers:
 # ─────────────────────────────────────────────────────────────────
 # Endpoint Domain Verification Tests (Rec #1)
 # ─────────────────────────────────────────────────────────────────
+
 
 class TestEndpointDomainVerification:
     """Tests for EIP-8004 §5 endpoint domain verification."""
@@ -618,7 +679,9 @@ class TestEndpointDomainVerification:
         mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
         mock_client_instance.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("omniclaw.identity.resolver.httpx.AsyncClient", return_value=mock_client_instance):
+        with patch(
+            "omniclaw.identity.resolver.httpx.AsyncClient", return_value=mock_client_instance
+        ):
             result = await resolver.verify_endpoint_domain(
                 endpoint_url="https://agent.example.com/api",
                 agent_id=42,
@@ -651,7 +714,9 @@ class TestEndpointDomainVerification:
         mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
         mock_client_instance.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("omniclaw.identity.resolver.httpx.AsyncClient", return_value=mock_client_instance):
+        with patch(
+            "omniclaw.identity.resolver.httpx.AsyncClient", return_value=mock_client_instance
+        ):
             result = await resolver.verify_endpoint_domain(
                 endpoint_url="https://agent.example.com/api",
                 agent_id=42,
@@ -671,7 +736,9 @@ class TestEndpointDomainVerification:
         mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
         mock_client_instance.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("omniclaw.identity.resolver.httpx.AsyncClient", return_value=mock_client_instance):
+        with patch(
+            "omniclaw.identity.resolver.httpx.AsyncClient", return_value=mock_client_instance
+        ):
             result = await resolver.verify_endpoint_domain(
                 endpoint_url="https://unreachable.example.com/",
                 agent_id=42,
@@ -720,31 +787,41 @@ class TestEndpointDomainVerification:
 # Reputation Summary & Bulk Feedback Tests (Rec #2, #4)
 # ─────────────────────────────────────────────────────────────────
 
+
 class TestProviderOptimizations:
     """Tests for getSummary and readAllFeedback optimizations."""
 
     def test_get_reputation_summary_empty_clients_warning(self):
         """getSummary with empty clients → None (EIP-8004 security requirement)."""
         from omniclaw.trust.provider import ERC8004Provider
+        import asyncio
 
         provider = ERC8004Provider(rpc_url="https://fake.rpc")
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
-            provider.get_reputation_summary(
-                agent_id=42, client_addresses=[], network="ETH",
+        loop = asyncio.new_event_loop()
+        try:
+            result = loop.run_until_complete(
+                provider.get_reputation_summary(
+                    agent_id=42,
+                    client_addresses=[],
+                    network="ETH",
+                )
             )
-        )
-        assert result is None
+            assert result is None
+        finally:
+            loop.close()
 
     def test_get_all_feedback_bulk_no_registry(self):
         """Bulk feedback with no registry → empty list."""
+        import asyncio
+
         from omniclaw.trust.provider import ERC8004Provider
 
         provider = ERC8004Provider(rpc_url="https://fake.rpc")
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
+
+        result = asyncio.run(
             provider.get_all_feedback_bulk(
-                agent_id=42, network="UNSUPPORTED",
+                agent_id=42,
+                network="UNSUPPORTED",
             )
         )
         assert result == []
@@ -754,46 +831,48 @@ class TestProviderOptimizations:
 # Validation Registry Readiness Tests (Rec #3)
 # ─────────────────────────────────────────────────────────────────
 
+
 class TestValidationRegistryReadiness:
     """Tests for Validation Registry methods (ready for deployment)."""
 
     def test_validation_status_no_registry(self):
         """get_validation_status with no deployed registry → None."""
+        import asyncio
+
         from omniclaw.trust.provider import ERC8004Provider
 
         provider = ERC8004Provider(rpc_url="https://fake.rpc")
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
-            provider.get_validation_status("0xabc123", "ETH")
-        )
+
+        result = asyncio.run(provider.get_validation_status("0xabc123", "ETH"))
         assert result is None
 
     def test_agent_validations_no_registry(self):
         """get_agent_validations with no deployed registry → empty list."""
+        import asyncio
+
         from omniclaw.trust.provider import ERC8004Provider
 
         provider = ERC8004Provider(rpc_url="https://fake.rpc")
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
-            provider.get_agent_validations(42, "ETH")
-        )
+
+        result = asyncio.run(provider.get_agent_validations(42, "ETH"))
         assert result == []
 
     def test_validator_requests_no_registry(self):
         """get_validator_requests with no deployed registry → empty list."""
+        import asyncio
+
         from omniclaw.trust.provider import ERC8004Provider
 
         provider = ERC8004Provider(rpc_url="https://fake.rpc")
-        import asyncio
-        result = asyncio.get_event_loop().run_until_complete(
-            provider.get_validator_requests("0xValidator", "ETH")
-        )
+
+        result = asyncio.run(provider.get_validator_requests("0xValidator", "ETH"))
         assert result == []
 
 
 # ─────────────────────────────────────────────────────────────────
 # Datetime Fix Tests (Rec #5)
 # ─────────────────────────────────────────────────────────────────
+
 
 class TestDatetimeFix:
     """Verify datetime.now(timezone.utc) is used instead of deprecated utcnow()."""
@@ -815,4 +894,3 @@ class TestDatetimeFix:
         source = inspect.getsource(scoring)
         assert "datetime.utcnow()" not in source, "scoring.py still uses deprecated utcnow()"
         assert "datetime.now(timezone.utc)" in source
-

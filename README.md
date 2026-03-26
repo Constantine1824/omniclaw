@@ -1,31 +1,40 @@
 # OmniClaw
 
-**The payment infrastructure for autonomous AI agents.**
+**OmniClaw is the economic control and trust infrastructure for autonomous agents — enabling them to pay, get paid, and transact securely under real-time policy enforcement.**
 
-Create agent wallets. Simulate payments. Enforce spending controls. Move USDC safely.
-
-OmniClaw is the execution layer for AI-native payments. It sits between raw wallet infrastructure and production payment flows so AI agents and AI-powered apps can move money with better safety, trust, and operator control.
+OmniClaw is the full payment layer for AI agents — not just paying, but earning too. It sits between raw wallet infrastructure and production payment flows so AI agents and AI-powered apps can move money with better safety, trust, and operator control.
 
 Instead of wiring wallets, payment routing, guardrails, intents, trust checks, and recovery flows by hand, OmniClaw gives you one SDK for:
 
+**For Agents That Pay:**
 - wallet creation and management
 - guarded `pay()` execution
 - `simulate()` before funds move
 - x402 and direct transfer routing
 - cross-chain USDC flows
 - payment intents with reservation handling
-- ERC-8004-style trust-aware checks
+- nanopayments — gas-free EIP-3009 USDC transfers via Circle Gateway
+
+**For Agents That Earn:**
+- Seller SDK — accept payments with automatic 402 responses
+- `sell()` decorator — protect endpoints and get paid automatically
+- Facilitator integration — Circle Gateway, Coinbase CDP, OrderN, RBX, Thirdweb
+
+**For Both:**
+- Trust Gate — ERC-8004 identity and reputation verification
+- Atomic Spending Guards — budget limits, rate limits, recipient whitelists
+- Multi-facilitator support — choose your preferred payment infrastructure
 
 - Product: `OmniClaw`
 - Company: `Omnuron AI`
 - Official site: `omniclaw.ai`
-- SDK status: `405` passing SDK tests in `tests/`
+- SDK status: `1220` passing SDK tests in `tests/`
 - Python: `>=3.10`
 - Package: `omniclaw`
 
 ![OmniClaw architecture overview](docs/architecture_overview.svg)
 
-*OmniClaw sits between AI applications and wallet/payment infrastructure, adding simulation, routing, guardrails, intents, trust checks, and operational visibility.*
+*OmniClaw sits between AI applications and wallet/payment infrastructure, adding simulation, routing, guardrails, intents, trust checks, settlement controls, and webhook security.*
 
 ## Why OmniClaw
 
@@ -37,6 +46,7 @@ Instead of wiring wallets, payment routing, guardrails, intents, trust checks, a
 ## Who It Is For
 
 - AI agents that need to pay for tools, services, APIs, or other agents
+- AI agents that need to accept payments and earn money
 - AI-powered applications that need embedded payment execution
 - Teams building web2 or web3 products where AI systems need to move money
 - Builders who want wallet infrastructure plus policy, simulation, trust, and operator controls
@@ -86,6 +96,9 @@ Core workflow: verify setup, create a wallet, simulate the payment, then execute
 - Simulate payments before execution
 - Record transaction history in the built-in ledger
 - Optionally run ERC-8004 trust verification when an RPC URL is configured
+- **Receive nanopayments** as a seller via `@client.sell()` FastAPI decorator (EIP-3009 gas-free)
+- **Send nanopayments** as a buyer — micro-amounts automatically use Circle Gateway nanopayments
+- Verify webhook signatures and persist webhook deduplication (`notificationId`) for idempotent processing
 
 ## Built For Production
 
@@ -99,6 +112,7 @@ Core workflow: verify setup, create a wallet, simulate the payment, then execute
 
 - Use Circle for wallet custody and transaction infrastructure.
 - Use x402 where pay-per-request HTTP payments make sense.
+- Use nanopayments for gas-free micro-transactions (EIP-3009 on Circle Gateway).
 - Use OmniClaw to orchestrate execution safely across those systems.
 
 That means fewer one-off payment scripts, less duplicated safety code, and a faster path from demo agent to production.
@@ -164,11 +178,40 @@ OMNICLAW_LOG_LEVEL=INFO
 OMNICLAW_RPC_URL=https://your-rpc-provider
 ```
 
+Production hardening settings (required when `OMNICLAW_ENV=production` or `mainnet`):
+
+```env
+OMNICLAW_ENV=production
+OMNICLAW_STRICT_SETTLEMENT=true
+OMNICLAW_SELLER_NONCE_REDIS_URL=redis://localhost:6379/1
+OMNICLAW_WEBHOOK_VERIFICATION_KEY=your_public_key
+OMNICLAW_WEBHOOK_DEDUP_DB_PATH=/var/lib/omniclaw/webhook_dedup.sqlite3
+```
+
 Notes:
 
 - `OMNICLAW_REDIS_URL` is the only Redis URL env used by the SDK.
 - Trust verification is optional by default.
 - If you explicitly request trust verification with `check_trust=True`, `OMNICLAW_RPC_URL` must be set to a real RPC endpoint.
+- Webhook deduplication is persistent by `notificationId` when `OMNICLAW_WEBHOOK_DEDUP_DB_PATH` is set.
+
+## Production Canary
+
+Run a payment canary before and after deploys:
+
+```bash
+python scripts/payment_canary.py \
+  --wallet-id <wallet_id> \
+  --recipient <recipient> \
+  --amount 0.10 \
+  --network ARC-TESTNET \
+  --sla-seconds 300
+```
+
+Expected behavior:
+
+- returns exit code `0` on final success within SLA
+- returns non-zero on terminal failure or SLA breach
 
 ## Entity Secret and Recovery
 
@@ -282,6 +325,7 @@ Routing behavior:
 - blockchain address -> direct transfer
 - URL -> x402 flow
 - `destination_chain` set -> cross-chain gateway flow
+- micro payments can route to nanopayments (Circle Gateway batched EIP-3009)
 
 ### 3. Simulation
 
@@ -352,11 +396,11 @@ Behavior:
 
 Start here:
 
-- [Docs Index](docs/README.md)
+- [Architecture and Features](docs/FEATURES.md)
 - [SDK Usage Guide](docs/SDK_USAGE_GUIDE.md)
 - [API Reference](docs/API_REFERENCE.md)
-- [Architecture and Features](docs/FEATURES.md)
 - [Cross-Chain Usage](docs/CCTP_USAGE.md)
+- [Production Hardening](docs/PRODUCTION_HARDENING.md)
 - [ERC-8004 Spec Notes](docs/erc_804_spec.md)
 - [Roadmap](ROADMAP.md)
 
@@ -382,5 +426,5 @@ src/omniclaw/         SDK source
 tests/                SDK test suite
 docs/                 User and developer documentation
 examples/             Example integrations
-mcp-server/           Optional MCP server, not required for SDK usage
+mcp_server/           Optional MCP server, not required for SDK usage
 ```
