@@ -207,7 +207,7 @@ class NanopaymentAdapter:
 
     def __init__(
         self,
-        vault: "NanoKeyVault",
+        vault: NanoKeyVault,
         nanopayment_client: NanopaymentClient,
         http_client: httpx.AsyncClient,
         auto_topup_enabled: bool = True,
@@ -216,6 +216,7 @@ class NanopaymentAdapter:
         circuit_breaker: NanopaymentCircuitBreaker | None = None,
         retry_attempts: int = 3,
         retry_base_delay: float = 0.5,
+        strict_settlement: bool = True,
     ) -> None:
         self._vault = vault
         self._client = nanopayment_client
@@ -226,6 +227,7 @@ class NanopaymentAdapter:
         self._circuit_breaker = circuit_breaker or NanopaymentCircuitBreaker()
         self._retry_attempts = retry_attempts
         self._retry_base_delay = retry_base_delay
+        self._strict_settlement = strict_settlement
 
     # -------------------------------------------------------------------------
     # x402 URL payment
@@ -442,8 +444,6 @@ class NanopaymentAdapter:
             ) from exc
 
         # Step 9: Settle payment with Circle Gateway
-        # IMPORTANT: If user got content (HTTP success), payment should succeed
-        # even if settlement has transient issues. Only fail on unrecoverable errors.
         settle_resp = None
         settlement_error: str | None = None
         transaction = ""
@@ -455,14 +455,7 @@ class NanopaymentAdapter:
                 f"Nanopayment circuit breaker is open. "
                 f"payer={payer_address}, amount={updated_kind.amount}"
             )
-            # Don't fail if content was delivered
-            if _is_success_status(retry_resp.status_code):
-                logger.warning(
-                    f"Content delivered despite circuit breaker. "
-                    f"payer={payer_address}, seller={updated_kind.pay_to}"
-                )
-            else:
-                raise CircuitOpenError(recovery_seconds=self._circuit_breaker._recovery_seconds)
+            raise CircuitOpenError(recovery_seconds=self._circuit_breaker._recovery_seconds)
 
         try:
             settle_resp = await self._settle_with_retry(
@@ -476,58 +469,29 @@ class NanopaymentAdapter:
             # Circuit breaker or transient error after all retries exhausted
             settlement_error = str(exc)
             self._circuit_breaker.record_failure()
-            if _is_success_status(retry_resp.status_code):
-                # User got content - still mark as success
-                logger.warning(
-                    f"Settlement failed (after retries) but content delivered: {settlement_error}. "
-                    f"payer={payer_address}"
-                )
-            else:
-                # User did NOT get content - raise
-                raise SettlementError(
-                    reason=f"Settlement failed after retries: {settlement_error}",
-                    transaction=None,
-                    payer=payer_address,
-                ) from exc
+            raise SettlementError(
+                reason=f"Settlement failed after retries: {settlement_error}",
+                transaction=None,
+                payer=payer_address,
+            ) from exc
         except SettlementError as exc:
             settlement_error = str(exc)
-            # Determine if this is a recoverable error
-            # Recoverable: transient network issues, temporary API problems
-            # Non-recoverable: signature invalid, nonce reused, authorization expired
             if isinstance(exc, (NonceReusedError, InsufficientBalanceError)):
-                # Non-recoverable - these indicate actual payment failure
-                # User may NOT have gotten content if this is nonce reused
-                # But if retry succeeded (HTTP 200), content WAS delivered
-                if _is_success_status(retry_resp.status_code):
-                    # User got content - record the error but don't fail
-                    logger.error(
-                        f"Settlement failed but content delivered: {settlement_error}. "
-                        f"tx={transaction}, payer={payer_address}"
-                    )
-                    # Still mark as success because content was delivered
-                else:
-                    # User did NOT get content - this is a real failure
-                    raise
-            else:
-                # Other settlement errors - log but don't fail if content delivered
-                logger.warning(
-                    f"Settlement warning (content delivered): {settlement_error}. "
-                    f"payer={payer_address}"
-                )
+                raise
+            if self._strict_settlement:
+                raise
+            logger.warning(
+                "Settlement warning in non-strict mode: %s (payer=%s)",
+                settlement_error,
+                payer_address,
+            )
 
         # Step 10: Determine final success status
-        # Success if: HTTP returned success OR settlement succeeded
         content_delivered = _is_success_status(retry_resp.status_code)
         settlement_succeeded = settle_resp is not None and settle_resp.success
-        final_success = content_delivered or settlement_succeeded
-
-        # If content was delivered but settlement failed, log for audit
-        if content_delivered and not settlement_succeeded and settlement_error:
-            logger.warning(
-                f"AUDIT: Content delivered but settlement failed. "
-                f"payer={payer_address}, seller={updated_kind.pay_to}, "
-                f"amount={updated_kind.amount}, error={settlement_error}"
-            )
+        final_success = settlement_succeeded if self._strict_settlement else (
+            settlement_succeeded or content_delivered
+        )
 
         # Step 11: Return result
         amount_decimal = _atomic_to_decimal(updated_kind.amount)
@@ -674,9 +638,9 @@ class NanopaymentAdapter:
 
     async def _settle_with_retry(
         self,
-        payload: "PaymentPayload",
-        requirements: "PaymentRequirements",
-    ) -> "SettleResponse | None":
+        payload: PaymentPayload,
+        requirements: PaymentRequirements,
+    ) -> SettleResponse | None:
         """
         Settle a payment with circuit breaker and retry logic.
 
@@ -938,7 +902,7 @@ class NanopaymentProtocolAdapter:
         timeout_seconds: float | None = None,
         nano_key_alias: str | None = None,
         **kwargs: Any,
-    ) -> "PaymentResult":
+    ) -> PaymentResult:
         """
         Execute a payment via Circle Gateway nanopayments.
 
@@ -962,24 +926,11 @@ class NanopaymentProtocolAdapter:
                 # Address payment below micro threshold
                 network = destination_chain or source_network
                 if not network:
-                    # Try to get from config or environment
-                    # Note: Config requires circle_api_key and entity_secret,
-                    # which may not be available in all contexts.
-                    # Fall back to a reasonable default.
-                    try:
-                        from omniclaw.core.config import Config
-
-                        config = Config()
-                        network = config.nanopayments_default_network
-                    except (TypeError, ImportError):
-                        # Config not fully initialized — use environment variable or default
-                        import os
-
-                        network = os.environ.get("NANOPAYMENTS_DEFAULT_NETWORK", "eip155:5042002")
+                    network = await self._adapter._vault.get_network(alias=nano_key_alias)
                 result = await self._adapter.pay_direct(
                     seller_address=recipient,
                     amount_usdc=str(amount),
-                    network=network,
+                    network=str(network),
                     nano_key_alias=nano_key_alias,
                 )
 
@@ -1002,8 +953,9 @@ class NanopaymentProtocolAdapter:
                 },
             )
 
-        except Exception as exc:
-            # Graceful degradation — let router try next adapter
+        except (UnsupportedSchemeError, CircuitOpenError) as exc:
+            # Safe fallback: seller does not support GatewayWalletBatched
+            # or circuit is open before attempting settlement.
             return PaymentResult(
                 success=False,
                 transaction_id=None,
@@ -1013,6 +965,21 @@ class NanopaymentProtocolAdapter:
                 method=PaymentMethod.NANOPAYMENT,
                 status=PaymentStatus.FAILED,
                 error=f"Nanopayment failed (falling back): {exc}",
+                metadata={"fallback_eligible": True},
+            )
+        except Exception as exc:
+            # Other failures may occur after partial protocol execution;
+            # do not fallback automatically to avoid accidental double-pay.
+            return PaymentResult(
+                success=False,
+                transaction_id=None,
+                blockchain_tx=None,
+                amount=amount,
+                recipient=recipient,
+                method=PaymentMethod.NANOPAYMENT,
+                status=PaymentStatus.FAILED,
+                error=f"Nanopayment failed: {exc}",
+                metadata={"fallback_eligible": False},
             )
 
     async def simulate(

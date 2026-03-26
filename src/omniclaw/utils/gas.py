@@ -1,7 +1,6 @@
 """Gas estimation utilities for OmniClaw."""
 
 from decimal import Decimal
-from typing import Dict
 
 from omniclaw.core.logging import get_logger
 from omniclaw.core.types import Network
@@ -10,7 +9,7 @@ logger = get_logger("utils.gas")
 
 
 # Minimum gas requirements by network (in native tokens)
-GAS_REQUIREMENTS: Dict[Network, Decimal] = {
+GAS_REQUIREMENTS: dict[Network, Decimal] = {
     # Ethereum
     Network.ETH: Decimal("0.01"),
     Network.ETH_SEPOLIA: Decimal("0.01"),
@@ -36,13 +35,7 @@ GAS_REQUIREMENTS: Dict[Network, Decimal] = {
 
 def get_network_gas_token(network: Network) -> str:
     """Get the native gas token name for a network."""
-    if network in [Network.ETH, Network.ETH_SEPOLIA]:
-        return "ETH"
-    elif network in [Network.OP, Network.OP_SEPOLIA]:
-        return "ETH"
-    elif network in [Network.ARB, Network.ARB_SEPOLIA]:
-        return "ETH"
-    elif network in [Network.BASE, Network.BASE_SEPOLIA]:
+    if network in [Network.ETH, Network.ETH_SEPOLIA] or network in [Network.OP, Network.OP_SEPOLIA] or network in [Network.ARB, Network.ARB_SEPOLIA] or network in [Network.BASE, Network.BASE_SEPOLIA]:
         return "ETH"
     elif network in [Network.AVAX, Network.AVAX_FUJI]:
         return "AVAX"
@@ -94,7 +87,7 @@ def check_gas_requirements(
     return True, ""
 
 
-def estimate_cctp_gas_cost(network: Network) -> Dict[str, Decimal]:
+def estimate_cctp_gas_cost(network: Network) -> dict[str, Decimal]:
     """
     Estimate gas costs for a CCTP transfer.
 

@@ -9,9 +9,9 @@ from __future__ import annotations
 import time
 from enum import Enum
 from typing import TYPE_CHECKING
-from omniclaw.events import event_emitter
 
 from omniclaw.core.logging import get_logger
+from omniclaw.events import event_emitter
 
 if TYPE_CHECKING:
     from omniclaw.storage.base import StorageBackend

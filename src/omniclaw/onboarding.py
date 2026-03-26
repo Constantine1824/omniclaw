@@ -14,11 +14,12 @@ Usage:
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import logging
 import os
 import secrets
-import hashlib
 import stat
 import sys
 from pathlib import Path
@@ -38,6 +39,7 @@ except ImportError:
 
 
 MANAGED_CREDENTIALS_FILE = "credentials.json"
+KEYRING_SERVICE = "omniclaw.managed_credentials"
 
 
 def _api_key_fingerprint(api_key: str) -> str:
@@ -57,6 +59,30 @@ def _mask_secret(secret: str | None) -> str | None:
 def _managed_credentials_path() -> Path:
     """Return the path to the managed credentials metadata file."""
     return get_config_dir() / MANAGED_CREDENTIALS_FILE
+
+
+def _store_secret_in_keyring(secret_ref: str, secret_value: str) -> bool:
+    """Store a secret in OS keyring if available."""
+    try:
+        import keyring  # type: ignore
+
+        keyring.set_password(KEYRING_SERVICE, secret_ref, secret_value)
+        return True
+    except Exception:
+        return False
+
+
+def _load_secret_from_keyring(secret_ref: str | None) -> str | None:
+    """Load a secret from OS keyring if available."""
+    if not secret_ref:
+        return None
+    try:
+        import keyring  # type: ignore
+
+        value = keyring.get_password(KEYRING_SERVICE, secret_ref)
+        return value if isinstance(value, str) and value else None
+    except Exception:
+        return None
 
 
 def _read_managed_credentials_store() -> dict[str, Any]:
@@ -104,15 +130,26 @@ def store_managed_credentials(
     """
     store = _read_managed_credentials_store()
     fingerprint = _api_key_fingerprint(api_key)
+    secret_ref = f"{fingerprint}:entity_secret"
+    stored_in_keyring = _store_secret_in_keyring(secret_ref, entity_secret)
+    allow_plaintext_fallback = (
+        os.environ.get("OMNICLAW_ALLOW_PLAINTEXT_MANAGED_SECRET", "false").lower() == "true"
+    )
     recovery_path = recovery_file or (
         str(find_recovery_file()) if find_recovery_file() else None
     )
 
+    stored_entity_secret = entity_secret if (not stored_in_keyring and allow_plaintext_fallback) else None
+
     store["credentials"][fingerprint] = {
         "api_key_fingerprint": fingerprint,
         "api_key_masked": _mask_secret(api_key),
-        "entity_secret": entity_secret,
+        "entity_secret": stored_entity_secret,
         "entity_secret_masked": _mask_secret(entity_secret),
+        "entity_secret_ref": secret_ref if stored_in_keyring else None,
+        "entity_secret_storage": "keyring"
+        if stored_in_keyring
+        else ("plaintext" if stored_entity_secret else "unavailable"),
         "source": source,
         "recovery_file": recovery_path,
     }
@@ -132,6 +169,9 @@ def load_managed_entity_secret(api_key: str) -> str | None:
     entry = load_managed_credentials(api_key)
     if not entry:
         return None
+    secret = _load_secret_from_keyring(entry.get("entity_secret_ref"))
+    if secret:
+        return secret
     secret = entry.get("entity_secret")
     return secret if isinstance(secret, str) and secret else None
 
@@ -377,10 +417,8 @@ OMNICLAW_NETWORK={network}
 """
 
     env_path.write_text(env_content)
-    try:
+    with contextlib.suppress(OSError):
         store_managed_credentials(api_key, entity_secret, source="create_env_file")
-    except OSError:
-        pass
     return env_path
 
 

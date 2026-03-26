@@ -335,9 +335,8 @@ class EIP3009Signer:
             raise InvalidPrivateKeyError(f"Failed to derive address: {e}")
 
     def __repr__(self) -> str:
-        """Show masked key for debugging."""
-        masked = self._private_key[:8] + "..." + self._private_key[-8:]
-        return f"EIP3009Signer(address={self._address[:10]}..., key=0x{masked})"
+        """Safe representation without private-key material."""
+        return f"EIP3009Signer(address={self._address})"
 
     def __del__(self) -> None:
         """Attempt to clear sensitive data on deletion."""

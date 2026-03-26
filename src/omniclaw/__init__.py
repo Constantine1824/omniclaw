@@ -65,6 +65,15 @@ from omniclaw.guards import (
     RecipientGuard,
     SingleTxGuard,
 )
+
+# ERC-8004 Trust Layer
+from omniclaw.identity.types import (
+    AgentIdentity,
+    ReputationScore,
+    TrustCheckResult,
+    TrustPolicy,
+    TrustVerdict,
+)
 from omniclaw.onboarding import (
     doctor,
     ensure_setup,
@@ -78,67 +87,58 @@ from omniclaw.onboarding import (
     verify_setup,
 )
 
-# ERC-8004 Trust Layer
-from omniclaw.identity.types import (
-    AgentIdentity,
-    ReputationScore,
-    TrustCheckResult,
-    TrustPolicy,
-    TrustVerdict,
-)
-from omniclaw.trust.gate import TrustGate
-
 # Nanopayments (EIP-3009 Circle Gateway)
 from omniclaw.protocols.nanopayments import (
-    # Client
-    NanopaymentClient,
-    NanopaymentHTTPClient,
-    # Vault & Keys
-    NanoKeyVault,
-    NanoKeyStore,
-    # Adapter
-    NanopaymentAdapter,
-    NanopaymentProtocolAdapter,
-    # Wallet
-    GatewayWalletManager,
-    # Middleware
-    GatewayMiddleware,
-    PaymentRequiredHTTPException,
-    parse_price,
-    # Types
-    DepositResult,
-    GatewayBalance,
-    NanopaymentResult,
-    PaymentPayload,
-    PaymentRequirements,
-    SupportedKind,
-    VerifyResponse,
-    WithdrawResult,
     # Exceptions
     AuthorizationExpiredError,
     AuthorizationNotYetValidError,
     DepositError,
+    # Types
+    DepositResult,
     DuplicateKeyAliasError,
     ERC20ApprovalError,
     GatewayAPIError,
+    GatewayBalance,
+    # Middleware
+    GatewayMiddleware,
+    # Wallet
+    GatewayWalletManager,
     InvalidPriceError,
     InvalidPrivateKeyError,
     InvalidSignatureError,
     KeyNotFoundError,
     MiddlewareError,
+    NanoKeyStore,
+    # Vault & Keys
+    NanoKeyVault,
+    # Adapter
+    NanopaymentAdapter,
+    # Client
+    NanopaymentClient,
     NanopaymentError,
+    NanopaymentHTTPClient,
     NanopaymentNotInitializedError,
+    NanopaymentProtocolAdapter,
+    NanopaymentResult,
     NoDefaultKeyError,
     NonceReusedError,
+    PaymentPayload,
     PaymentRequiredError,
+    PaymentRequiredHTTPException,
+    PaymentRequirements,
     SettlementError,
     SignatureVerificationError,
     SigningError,
+    SupportedKind,
     UnsupportedNetworkError,
     UnsupportedSchemeError,
     VerificationError,
+    VerifyResponse,
     WithdrawError,
+    WithdrawResult,
+    parse_price,
 )
+from omniclaw.trust.gate import TrustGate
 
 __version__ = "0.0.1"
 __all__ = [

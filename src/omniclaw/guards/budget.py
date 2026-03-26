@@ -6,13 +6,16 @@ Tracks cumulative spending and enforces daily/hourly/total budgets.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Any
 
+from omniclaw.events import event_emitter
 from omniclaw.guards.base import Guard, GuardResult, PaymentContext
 from omniclaw.storage import StorageBackend
-from omniclaw.events import event_emitter
+
+logger = logging.getLogger(__name__)
 
 
 class BudgetGuard(Guard):
@@ -188,12 +191,14 @@ class BudgetGuard(Guard):
                 )
 
         remaining = {}
-        if self._hourly_limit:
-            remaining["hourly"] = self._hourly_limit - hourly_spent
+        if self._hourly_limit is not None:
+            hourly = await self.get_hourly_spent(wallet_id)
+            remaining["hourly"] = self._hourly_limit - hourly
             if remaining["hourly"] < self._hourly_limit * Decimal("0.2"):
                 event_emitter.emit_background("guard.budget_limit_approaching", wallet_id, payload={"remaining": str(remaining["hourly"])})
-        if self._daily_limit:
-            remaining["daily"] = self._daily_limit - daily_spent
+        if self._daily_limit is not None:
+            daily = await self.get_daily_spent(wallet_id)
+            remaining["daily"] = self._daily_limit - daily
             if remaining["daily"] < self._daily_limit * Decimal("0.2"):
                 event_emitter.emit_background("guard.budget_limit_approaching", wallet_id, payload={"remaining": str(remaining["daily"])})
 
@@ -285,6 +290,7 @@ class BudgetGuard(Guard):
             return
         import json
 
+        wallet_id = "<unknown>"
         try:
             data = json.loads(token)
             if data.get("v") != 2:
@@ -305,14 +311,22 @@ class BudgetGuard(Guard):
                 await self._storage.atomic_add("guard_state", key_base, str(amount))
                 await self._storage.atomic_add("guard_state", key_reserved, str(-amount))
 
-        except Exception:
-            pass  # Best effort commit? Or log failure.
+        except Exception as exc:
+            logger.error(
+                f"BudgetGuard.commit() failed for wallet {wallet_id}: {exc}. "
+                f"Budget tracking may be inaccurate — manual reconciliation recommended.",
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"BudgetGuard commit failed for wallet {wallet_id}; refusing to continue silently."
+            ) from exc
 
     async def release(self, token: str | None) -> None:
         if not token or not self._storage:
             return
         import json
 
+        wallet_id = "<unknown>"
         try:
             data = json.loads(token)
             if data.get("v") != 2:
@@ -328,8 +342,15 @@ class BudgetGuard(Guard):
                 key_reserved = f"{key_base}:reserved"
                 await self._storage.atomic_add("guard_state", key_reserved, str(-amount))
 
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.error(
+                f"BudgetGuard.release() failed for wallet {wallet_id}: {exc}. "
+                f"Reserved budget may be permanently locked — manual reconciliation recommended.",
+                exc_info=True,
+            )
+            raise RuntimeError(
+                f"BudgetGuard release failed for wallet {wallet_id}; refusing to continue silently."
+            ) from exc
 
     # Legacy support / Read-only helpers
     async def get_total_spent(self, wallet_id: str) -> Decimal:

@@ -4,7 +4,7 @@ OmniClaw Seller SDK.
 x402 payment integration for sellers.
 
 Usage:
-    from omniclaw.seller import create_seller
+    from omniclaw.seller import Seller, create_seller
 
     seller = create_seller(
         seller_address="0x742d...",
@@ -16,47 +16,48 @@ Usage:
 """
 
 # Main Seller class
-from omniclaw.seller.seller import (
-    Seller,
-    create_seller,
-    PaymentScheme,
-    PaymentStatus,
-    PaymentRecord,
-    Endpoint,
-    SellerConfig,
-    SimpleSeller,
-)
-
-# Facilitators - Top 5 supported
+# Circle Gateway Facilitator
 from omniclaw.seller.facilitator import (
     CircleGatewayFacilitator,
-    VerifyResult,
     SettleResult,
+    VerifyResult,
 )
 
+# Multi-facilitator support (Coinbase, OrderN, RBX, Thirdweb)
 from omniclaw.seller.facilitator_generic import (
+    SUPPORTED_FACILITATORS,
     BaseFacilitator,
     CoinbaseFacilitator,
     OrderNFacilitator,
     RBXFacilitator,
     ThirdwebFacilitator,
     create_facilitator,
-    SUPPORTED_FACILITATORS,
+)
+from omniclaw.seller.seller import (
+    Endpoint,
+    PaymentRecord,
+    PaymentScheme,
+    PaymentStatus,
+    Seller,
+    SellerConfig,
+    create_seller,
 )
 
 __all__ = [
     # Main classes
     "Seller",
     "create_seller",
-    "SimpleSeller",
     # Types
     "PaymentScheme",
     "PaymentStatus",
     "PaymentRecord",
     "Endpoint",
     "SellerConfig",
-    # Facilitators
+    # Circle Gateway Facilitator
     "CircleGatewayFacilitator",
+    "VerifyResult",
+    "SettleResult",
+    # Multi-facilitator
     "CoinbaseFacilitator",
     "OrderNFacilitator",
     "RBXFacilitator",
@@ -64,7 +65,4 @@ __all__ = [
     "BaseFacilitator",
     "create_facilitator",
     "SUPPORTED_FACILITATORS",
-    # Results
-    "VerifyResult",
-    "SettleResult",
 ]

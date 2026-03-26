@@ -105,10 +105,10 @@ def gateway_keypair():
 
 
 @pytest.fixture
-def valid_requirements(buyer_keypair, gateway_keypair):
+def valid_requirements(vault, buyer_keypair, gateway_keypair):
     return PaymentRequirementsKind(
         scheme="exact",
-        network="eip155:5042002",
+        network=vault.default_network,
         asset="0xAbc1234567890aBcD1234567890aBcD12345678",  # Fake USDC address
         amount="1000000",
         max_timeout_seconds=345600,
@@ -295,7 +295,7 @@ class TestSign:
         )
         assert payload.x402_version == 2
         assert payload.scheme == "exact"
-        assert payload.network == "eip155:5042002"
+        assert payload.network == valid_requirements.network
         assert payload.payload.signature.startswith("0x")
 
     @pytest.mark.asyncio
@@ -339,7 +339,7 @@ class TestSign:
         from eth_account.messages import encode_typed_data
         from eth_account import Account
 
-        chain_id = 5042002
+        chain_id = int(valid_requirements.network.split(":")[1])
         domain = build_eip712_domain(
             chain_id=chain_id,
             verifying_contract=valid_requirements.extra.verifying_contract,
@@ -357,6 +357,17 @@ class TestSign:
         signable = encode_typed_data(full_message=structured_data)
         recovered = Account.recover_message(signable, signature=payload.payload.signature)
         assert recovered.lower() == payload.payload.authorization.from_address.lower()
+
+    @pytest.mark.asyncio
+    async def test_sign_network_mismatch_raises(self, vault, buyer_keypair, valid_requirements):
+        private_key, _ = buyer_keypair
+        await vault.add_key("mismatch", private_key, network="eip155:1")
+        with pytest.raises(ValueError, match="Network mismatch"):
+            await vault.sign(
+                requirements=valid_requirements,
+                amount_atomic=1000000,
+                alias="mismatch",
+            )
 
 
 # =============================================================================

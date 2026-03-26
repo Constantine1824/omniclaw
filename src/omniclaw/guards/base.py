@@ -220,14 +220,26 @@ class GuardChain:
 
     async def commit(self, tokens: list[tuple[str, str | None]]) -> None:
         """Commit all reservations."""
+        errors: list[str] = []
         for name, token in tokens:
             guard = self.get(name)
             if guard:
-                await guard.commit(token)
+                try:
+                    await guard.commit(token)
+                except Exception as exc:
+                    errors.append(f"{name}: {exc}")
+        if errors:
+            raise RuntimeError(f"Guard commit failures: {'; '.join(errors)}")
 
     async def release(self, tokens: list[tuple[str, str | None]]) -> None:
         """Release all reservations."""
+        errors: list[str] = []
         for name, token in tokens:
             guard = self.get(name)
             if guard:
-                await guard.release(token)
+                try:
+                    await guard.release(token)
+                except Exception as exc:
+                    errors.append(f"{name}: {exc}")
+        if errors:
+            raise RuntimeError(f"Guard release failures: {'; '.join(errors)}")

@@ -33,7 +33,6 @@ import httpx
 
 from omniclaw.core.exceptions import ProtocolError
 
-
 GATEWAY_API_TESTNET = "https://gateway-api-testnet.circle.com"
 GATEWAY_API_MAINNET = "https://gateway-api.circle.com"
 
@@ -144,16 +143,14 @@ class CircleGatewayFacilitator:
             environment=environment,
             timeout=timeout,
         )
-
-        if base_url:
-            self._config.base_url = base_url
+        self._base_url_override = base_url
 
         self._client = httpx.AsyncClient(timeout=timeout)
 
     @property
     def base_url(self) -> str:
         """Get the API base URL."""
-        return self._config.base_url
+        return self._base_url_override or self._config.base_url
 
     @property
     def name(self) -> str:
@@ -190,7 +187,7 @@ class CircleGatewayFacilitator:
         Returns:
             VerifyResult with validation status
         """
-        url = f"{self._config.base_url}{VERIFY_ENDPOINT}"
+        url = f"{self.base_url}{VERIFY_ENDPOINT}"
 
         body = {
             "paymentPayload": payment_payload,
@@ -259,7 +256,7 @@ class CircleGatewayFacilitator:
         Returns:
             SettleResult with settlement status
         """
-        url = f"{self._config.base_url}{SETTLE_ENDPOINT}"
+        url = f"{self.base_url}{SETTLE_ENDPOINT}"
 
         body = {
             "paymentPayload": payment_payload,
@@ -319,7 +316,7 @@ class CircleGatewayFacilitator:
         Returns:
             List of supported network configurations
         """
-        url = f"{self._config.base_url}{SUPPORTED_ENDPOINT}"
+        url = f"{self.base_url}{SUPPORTED_ENDPOINT}"
 
         try:
             response = await self._client.get(url, headers=self._config.headers)
@@ -337,7 +334,7 @@ class CircleGatewayFacilitator:
         """Close the HTTP client."""
         await self._client.aclose()
 
-    async def __aenter__(self) -> "CircleGatewayFacilitator":
+    async def __aenter__(self) -> CircleGatewayFacilitator:
         """Async context manager entry."""
         return self
 
@@ -350,7 +347,7 @@ def create_facilitator(
     circle_api_key: str | None = None,
     environment: str = "testnet",
     **kwargs,
-) -> "CircleGatewayFacilitator":
+) -> CircleGatewayFacilitator:
     """
     Factory function to create a facilitator.
 

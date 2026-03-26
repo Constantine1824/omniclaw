@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from omniclaw.events import event_emitter
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from omniclaw.core.exceptions import ValidationError
 from omniclaw.core.types import PaymentIntent, PaymentIntentStatus
+from omniclaw.events import event_emitter
 
 if TYPE_CHECKING:
     from omniclaw.storage.base import StorageBackend

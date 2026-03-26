@@ -365,13 +365,11 @@ class TestEIP3009Signer:
         with pytest.raises(InvalidPrivateKeyError, match="invalid hex"):
             EIP3009Signer("0x" + "gg" * 32)  # g is not hex
 
-    def test_repr_shows_masked_key(self, valid_private_key, signer):
-        """repr should not expose full key."""
+    def test_repr_redacts_private_key(self, valid_private_key, signer):
+        """repr should not expose any private key material."""
         r = repr(signer)
-        # Key should be masked
-        assert "..." in r
         # Address should be visible
-        assert signer.address[:10] in r
+        assert signer.address in r
         # Full key should NOT be visible
         assert valid_private_key not in r
 

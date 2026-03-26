@@ -187,6 +187,18 @@ def test_facilitator_urls_for_mainnet():
         assert f.base_url == expected_url, f"{provider}: expected {expected_url}, got {f.base_url}"
 
 
+def test_circle_facilitator_custom_base_url_override():
+    """Circle facilitator must honor explicit base_url overrides."""
+    custom = "https://gateway-proxy.internal.example"
+    f = create_facilitator(
+        provider="circle",
+        api_key="test_key",
+        environment="testnet",
+        base_url=custom,
+    )
+    assert f.base_url == custom
+
+
 def test_seller_with_each_facilitator():
     """Test seller works with each facilitator type."""
 

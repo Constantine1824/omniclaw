@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import math
+import re
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
@@ -82,6 +84,21 @@ class GatewayAdapter(ProtocolAdapter):
             )
 
         destination_address = recipient
+        strict_destination_validation = bool(kwargs.get("strict_destination_validation", False))
+        if strict_destination_validation and not re.fullmatch(
+            r"0x[a-fA-F0-9]{40}",
+            destination_address,
+        ):
+            return PaymentResult(
+                success=False,
+                transaction_id=None,
+                blockchain_tx=None,
+                amount=amount,
+                recipient=recipient,
+                method=self.method,
+                status=PaymentStatus.FAILED,
+                error=f"Invalid destination EVM address: {destination_address!r}",
+            )
 
         # Normalize network types to Network enums
         source_network = self._normalize_network(source_network)
@@ -292,7 +309,15 @@ class GatewayAdapter(ProtocolAdapter):
             transfer_mode = "Standard Transfer (~13-19m)"
         else:
             finality_threshold = FAST_TRANSFER_THRESHOLD if use_fast_transfer else STANDARD_TRANSFER_THRESHOLD
-            max_fee = DEFAULT_MAX_FEE  # 0.0005 USDC
+            fallback_max_fee = DEFAULT_MAX_FEE if use_fast_transfer else 0
+            max_fee = await self._resolve_cctp_max_fee(
+                source_network=source_network,
+                source_domain=source_domain,
+                dest_domain=dest_domain,
+                finality_threshold=finality_threshold,
+                amount_units=amount_units,
+                fallback_fee=fallback_max_fee,
+            )
             transfer_mode = "Fast Transfer (~2-5s)" if use_fast_transfer else "Standard Transfer (~13-19m)"
 
         # Gas check (except Arc)
@@ -540,6 +565,7 @@ class GatewayAdapter(ProtocolAdapter):
             should_mint = not is_relayed or dest_network == Network.ARC_TESTNET
 
             mint_result = None
+            status = PaymentStatus.PROCESSING
 
             if should_mint:
                 self._logger.info(f"CCTP V2: Attempting Agent-Side Mint (relayed={is_relayed}, dest={dest_network.value})")
@@ -548,12 +574,44 @@ class GatewayAdapter(ProtocolAdapter):
                 if mint_result["success"]:
                     note = f"Transfer completed via Agent-Side Mint. Tx: {mint_result.get('tx_hash')}"
                     blockchain_final_tx = mint_result.get('tx_hash')
+                    status = (
+                        PaymentStatus.PROCESSING
+                        if mint_result.get("status") == "pending_confirmation"
+                        else PaymentStatus.COMPLETED
+                    )
                 else:
                     note = f"Agent-Side Mint failed: {mint_result.get('error')}. Check destination wallet gas."
                     blockchain_final_tx = None
+                    return PaymentResult(
+                        success=False,
+                        transaction_id=burn_tx.id,
+                        blockchain_tx=burn_tx_hash,
+                        amount=amount,
+                        recipient=f"{dest_network.value}:{destination_address}",
+                        method=self.method,
+                        status=PaymentStatus.FAILED,
+                        error=note,
+                        metadata={
+                            "cctp_version": "v2",
+                            "cctp_flow": "burn_attestation_mint",
+                            "transfer_mode": transfer_mode,
+                            "source_domain": source_domain,
+                            "destination_domain": dest_domain,
+                            "burn_tx_id": burn_tx.id,
+                            "burn_tx_hash": burn_tx_hash,
+                            "mint_result": mint_result,
+                            "attestation_url": attestation_url,
+                            "source_network": source_network.value,
+                            "destination_network": dest_network.value,
+                            "destination_address": destination_address,
+                            "max_fee_usdc": str(Decimal(max_fee) / Decimal("1000000")),
+                            "min_finality_threshold": finality_threshold,
+                        },
+                    )
             else:
                 note = "Transfer handed off to CCTP Relayer/Forwarding Service for final minting"
                 blockchain_final_tx = None
+                status = PaymentStatus.PROCESSING
                 self._logger.info(f"CCTP V2: Attestation secured. {note} (max_fee={max_fee})")
 
             return PaymentResult(
@@ -563,7 +621,7 @@ class GatewayAdapter(ProtocolAdapter):
                 amount=amount,
                 recipient=f"{dest_network.value}:{destination_address}",
                 method=self.method,
-                status=PaymentStatus.COMPLETED, # From sender perspective, funds are sent (burned)
+                status=status,
                 metadata={
                     "cctp_version": "v2",
                     "cctp_flow": "burn_attestation_mint" if should_mint else "burn_attestation_relay",
@@ -652,9 +710,68 @@ class GatewayAdapter(ProtocolAdapter):
                 result["estimated_time"] = "~2-5 seconds (Fast Transfer)"
             else:
                 result["would_succeed"] = False
-                result["reason"] = f"CCTP not supported for {source_network.value} -> {dest_network.value}"
+                result["reason"] = f"CCTP not supported for {source_net_str} -> {dest_net_str}"
 
         return result
+
+    async def _resolve_cctp_max_fee(
+        self,
+        source_network: Network,
+        source_domain: int,
+        dest_domain: int,
+        finality_threshold: int,
+        amount_units: int,
+        fallback_fee: int,
+    ) -> int:
+        """
+        Fetch route-specific minimum fee from Iris and use it as maxFee.
+
+        Falls back to fallback_fee if lookup fails.
+        """
+        from omniclaw.core.cctp_constants import get_iris_url
+
+        fees_url = f"{get_iris_url(source_network)}/v2/burn/USDC/fees/{source_domain}/{dest_domain}"
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(fees_url, headers={"Accept": "application/json"})
+                response.raise_for_status()
+                data = response.json()
+            if not isinstance(data, list):
+                return fallback_fee
+
+            exact_match_bps: int | None = None
+            fallback_match_bps: int | None = None
+            for entry in data:
+                if not isinstance(entry, dict):
+                    continue
+                ft = int(entry.get("finalityThreshold", -1))
+                fee_bps = max(int(entry.get("minimumFee", 0)), 0)
+                if ft == finality_threshold:
+                    exact_match_bps = fee_bps
+                    break
+                if finality_threshold <= 1000 and ft <= 1000:
+                    fallback_match_bps = fee_bps
+                if finality_threshold >= 2000 and ft >= 2000:
+                    fallback_match_bps = fee_bps
+
+            selected_bps = exact_match_bps if exact_match_bps is not None else fallback_match_bps
+            if selected_bps is None:
+                return fallback_fee
+
+            # Circle Iris /v2/burn/USDC/fees returns minimumFee as basis points (bps).
+            # maxFee in depositForBurn is token units, so convert: amount * bps / 10_000.
+            computed_fee = math.ceil((amount_units * selected_bps) / 10_000)
+            if selected_bps > 0 and computed_fee == 0:
+                computed_fee = 1
+            return max(computed_fee, fallback_fee)
+        except Exception as exc:
+            self._logger.warning(
+                "CCTP fee lookup failed (%s). Using fallback max fee=%s",
+                exc,
+                fallback_fee,
+            )
+            return fallback_fee
 
     async def _mint_usdc(
         self,
@@ -703,7 +820,7 @@ class GatewayAdapter(ProtocolAdapter):
             # Wait for mint confirmation
             self._logger.info("CCTP V2: Waiting for mint transaction confirmation...")
             mint_tx_hash = None
-            for wait_attempt in range(60):
+            for _wait_attempt in range(60):
                 await asyncio.sleep(2)
                 updated_tx = self._wallet_service._circle.get_transaction(mint_tx.id)
 

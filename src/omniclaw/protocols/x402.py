@@ -32,8 +32,36 @@ HEADER_PAYMENT_SIGNATURE = "PAYMENT-SIGNATURE"  # V2
 HEADER_PAYMENT_RESPONSE = "PAYMENT-RESPONSE"  # V2
 HEADER_PAYMENT_REQUIRED_V1 = "X-Payment-Required"  # V1 Legacy
 
-# URL pattern for detecting x402-compatible endpoints
-URL_PATTERN = re.compile(r"^https?://")
+# URL pattern for detecting x402-compatible endpoints (HTTPS only)
+URL_PATTERN = re.compile(r"^https://")
+
+_CAIP2_TO_NETWORK: dict[str, Network] = {
+    "eip155:1": Network.ETH,
+    "eip155:11155111": Network.ETH_SEPOLIA,
+    "eip155:43114": Network.AVAX,
+    "eip155:43113": Network.AVAX_FUJI,
+    "eip155:137": Network.MATIC,
+    "eip155:80002": Network.MATIC_AMOY,
+    "eip155:42161": Network.ARB,
+    "eip155:421614": Network.ARB_SEPOLIA,
+    "eip155:8453": Network.BASE,
+    "eip155:84532": Network.BASE_SEPOLIA,
+    "eip155:10": Network.OP,
+    "eip155:11155420": Network.OP_SEPOLIA,
+    "eip155:5042002": Network.ARC_TESTNET,
+}
+
+
+def _resolve_network(value: str) -> Network | None:
+    if not value:
+        return None
+    value_norm = value.strip().lower()
+    if value_norm in _CAIP2_TO_NETWORK:
+        return _CAIP2_TO_NETWORK[value_norm]
+    try:
+        return Network.from_string(value)
+    except Exception:
+        return None
 
 
 @dataclass
@@ -271,14 +299,19 @@ class X402Adapter(ProtocolAdapter):
     ) -> PaymentResult:
         """Execute an x402 payment (V2)."""
         url = recipient
+        request_method = str(kwargs.get("http_method", kwargs.get("method", "GET"))).upper()
+        request_headers = kwargs.get("request_headers") or kwargs.get("headers")
+        request_json = kwargs.get("request_json")
+        request_body = kwargs.get("request_body", kwargs.get("body"))
 
         try:
             # Check for 402
             response, requirements = await self._request_with_402_check(
                 url,
-                method="GET",
-                json=None,
-                headers=None,
+                method=request_method,
+                json=request_json,
+                content=request_body,
+                headers=request_headers,
             )
 
             if response.status_code != 402:
@@ -345,11 +378,9 @@ class X402Adapter(ProtocolAdapter):
                 agent_wallet = self._wallet_service.get_wallet(wallet_id)
                 agent_network = Network.from_string(agent_wallet.blockchain)
 
-            # Parse seller's network from requirements - MUST succeed
-            seller_network_str = requirements.network.upper().replace("-", "_")
-            try:
-                seller_network = Network.from_string(seller_network_str)
-            except Exception:
+            # Parse seller's network from requirements (CAIP-2 and enum values supported)
+            seller_network = _resolve_network(requirements.network)
+            if seller_network is None:
                 return PaymentResult(
                     success=False,
                     transaction_id=None,
@@ -441,18 +472,24 @@ class X402Adapter(ProtocolAdapter):
                 },
             )
 
-            # Retry with PAYMENT-SIGNATURE
+            # Retry with PAYMENT-SIGNATURE while preserving caller-provided headers
             payment_header = payload.to_header()
-            headers = {HEADER_PAYMENT_SIGNATURE: payment_header}
+            headers: dict[str, str] = {}
+            if isinstance(request_headers, dict):
+                for k, v in request_headers.items():
+                    headers[str(k)] = str(v)
+            headers[HEADER_PAYMENT_SIGNATURE] = payment_header
 
             client = await self._get_http_client()
             final_response = await client.request(
-                "GET",
+                request_method,
                 url,
                 headers=headers,
+                json=request_json,
+                content=request_body,
             )
 
-            if final_response.status_code == 200:
+            if 200 <= final_response.status_code < 300:
                 # Parse response body
                 try:
                     response_data = final_response.json()

@@ -2,21 +2,28 @@
 
 **OmniClaw is the economic control and trust infrastructure for autonomous agents — enabling them to pay, get paid, and transact securely under real-time policy enforcement.**
 
-OmniClaw is the execution layer for AI-native payments. It sits between raw wallet infrastructure and production payment flows so AI agents and AI-powered apps can move money with better safety, trust, and operator control.
+OmniClaw is the full payment layer for AI agents — not just paying, but earning too. It sits between raw wallet infrastructure and production payment flows so AI agents and AI-powered apps can move money with better safety, trust, and operator control.
 
 Instead of wiring wallets, payment routing, guardrails, intents, trust checks, and recovery flows by hand, OmniClaw gives you one SDK for:
 
+**For Agents That Pay:**
 - wallet creation and management
 - guarded `pay()` execution
 - `simulate()` before funds move
 - x402 and direct transfer routing
 - cross-chain USDC flows
 - payment intents with reservation handling
-- ERC-8004-style trust-aware checks
-- **nanopayments** — gas-free EIP-3009 USDC transfers via Circle Gateway (seller: `@agent.sell()`, buyer: automatic for micro-amounts)
-- **Multi-facilitator support** — Circle Gateway, Coinbase CDP, OrderN, RBX, Thirdweb integrated
-- **Seller SDK** — accept payments with automatic 402 responses
-- **Trust Gate** — ERC-8004 identity and reputation verification
+- nanopayments — gas-free EIP-3009 USDC transfers via Circle Gateway
+
+**For Agents That Earn:**
+- Seller SDK — accept payments with automatic 402 responses
+- `sell()` decorator — protect endpoints and get paid automatically
+- Facilitator integration — Circle Gateway, Coinbase CDP, OrderN, RBX, Thirdweb
+
+**For Both:**
+- Trust Gate — ERC-8004 identity and reputation verification
+- Atomic Spending Guards — budget limits, rate limits, recipient whitelists
+- Multi-facilitator support — choose your preferred payment infrastructure
 
 - Product: `OmniClaw`
 - Company: `Omnuron AI`
@@ -39,6 +46,7 @@ Instead of wiring wallets, payment routing, guardrails, intents, trust checks, a
 ## Who It Is For
 
 - AI agents that need to pay for tools, services, APIs, or other agents
+- AI agents that need to accept payments and earn money
 - AI-powered applications that need embedded payment execution
 - Teams building web2 or web3 products where AI systems need to move money
 - Builders who want wallet infrastructure plus policy, simulation, trust, and operator controls

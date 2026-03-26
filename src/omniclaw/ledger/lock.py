@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from decimal import Decimal
-from omniclaw.events import event_emitter
 from typing import TYPE_CHECKING
+
+from omniclaw.events import event_emitter
 
 if TYPE_CHECKING:
     from omniclaw.storage.base import StorageBackend
@@ -92,3 +93,13 @@ class FundLockService:
         if result:
             logger.debug(f"Released lock for wallet {wallet_id}")
         return result
+
+    async def refresh_with_key(self, wallet_id: str, lock_token: str, ttl: int = 30) -> bool:
+        """
+        Refresh an existing wallet lock lease.
+
+        Returns:
+            True if refreshed, False if token mismatch or lock already lost.
+        """
+        lock_key = f"lock:wallet:{wallet_id}"
+        return await self._storage.refresh_lock(lock_key, lock_token, ttl)

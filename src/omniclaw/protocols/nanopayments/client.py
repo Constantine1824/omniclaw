@@ -26,6 +26,7 @@ import httpx
 from omniclaw.protocols.nanopayments import (
     CAIP2_TO_CIRCLE_DOMAIN,
     CIRCLE_DOMAIN_TO_CAIP2,
+    DEFAULT_HTTP_TIMEOUT_SECONDS,
     GATEWAY_API_MAINNET,
     GATEWAY_API_TESTNET,
     GATEWAY_BALANCES_PATH,
@@ -33,7 +34,6 @@ from omniclaw.protocols.nanopayments import (
     GATEWAY_X402_SUPPORTED_PATH,
     GATEWAY_X402_VERIFY_PATH,
     SUPPORTED_NETWORKS_CACHE_TTL_SECONDS,
-    DEFAULT_HTTP_TIMEOUT_SECONDS,
 )
 from omniclaw.protocols.nanopayments.exceptions import (
     GatewayAPIError,

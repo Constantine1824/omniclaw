@@ -202,6 +202,20 @@ class StorageBackend(ABC):
         """
         ...
 
+    async def refresh_lock(
+        self,
+        key: str,
+        token: str,
+        ttl: int = 30,
+    ) -> bool:
+        """
+        Refresh a lock's TTL if the ownership token matches.
+
+        Backends that support lease extension should override this.
+        The default implementation returns False.
+        """
+        return False
+
     async def health_check(self) -> bool:
         """
         Check if storage is healthy and connected.

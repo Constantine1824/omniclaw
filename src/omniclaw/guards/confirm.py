@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
-from omniclaw.events import event_emitter
 
+from omniclaw.events import event_emitter
 from omniclaw.guards.base import Guard, GuardResult, PaymentContext
 
 # Type for confirmation callback

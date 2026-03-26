@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-
 # =============================================================================
 # PAYMENT REQUIREMENTS (from 402 response / seller side)
 # =============================================================================

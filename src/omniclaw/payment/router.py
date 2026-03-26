@@ -56,6 +56,31 @@ class PaymentRouter:
                 return adapter
         return None
 
+    def _find_adapters(
+        self,
+        recipient: str,
+        source_network: Network | str | None = None,
+        destination_chain: Network | str | None = None,
+        **kwargs: Any,
+    ) -> list[ProtocolAdapter]:
+        return [
+            adapter
+            for adapter in self._adapters
+            if adapter.supports(
+                recipient,
+                source_network=source_network,
+                destination_chain=destination_chain,
+                **kwargs,
+            )
+        ]
+
+    @staticmethod
+    def _can_fallback(result: PaymentResult) -> bool:
+        metadata = result.metadata or {}
+        if metadata.get("fallback_eligible") is True:
+            return True
+        return False
+
     async def pay(
         self,
         wallet_id: str,
@@ -77,8 +102,14 @@ class PaymentRouter:
         wallet = self._wallet_service.get_wallet(wallet_id)
         source_network = Network.from_string(wallet.blockchain)
 
-        adapter = self._find_adapter(recipient, destination_chain=destination_chain, source_network=source_network, **kwargs)
-        if not adapter:
+        adapters = self._find_adapters(
+            recipient,
+            destination_chain=destination_chain,
+            source_network=source_network,
+            amount=amount_decimal,
+            **kwargs,
+        )
+        if not adapters:
             self._logger.error(f"No adapter found for recipient: {recipient}")
             return PaymentResult(
                 success=False,
@@ -92,24 +123,54 @@ class PaymentRouter:
                 guards_passed=guards_passed or [],
             )
 
-        result = await adapter.execute(
-            wallet_id=wallet_id,
-            recipient=recipient,
+        last_result: PaymentResult | None = None
+        for index, adapter in enumerate(adapters):
+            result = await adapter.execute(
+                wallet_id=wallet_id,
+                recipient=recipient,
+                amount=amount_decimal,
+                source_network=source_network,
+                purpose=purpose,
+                fee_level=fee_level,
+                idempotency_key=idempotency_key,
+                destination_chain=destination_chain,
+                wait_for_completion=wait_for_completion,
+                timeout_seconds=timeout_seconds,
+                **kwargs,
+            )
+            last_result = result
+
+            if result.success:
+                if guards_passed:
+                    result.guards_passed = guards_passed
+                return result
+
+            has_next = index < (len(adapters) - 1)
+            if not has_next or not self._can_fallback(result):
+                if guards_passed:
+                    result.guards_passed = guards_passed
+                return result
+
+            self._logger.warning(
+                "Adapter %s failed with fallback-eligible error; trying next route.",
+                getattr(adapter.method, "value", str(adapter.method)),
+            )
+
+        if last_result is not None:
+            if guards_passed:
+                last_result.guards_passed = guards_passed
+            return last_result
+        return PaymentResult(
+            success=False,
+            transaction_id=None,
+            blockchain_tx=None,
             amount=amount_decimal,
-            source_network=source_network,
-            purpose=purpose,
-            fee_level=fee_level,
-            idempotency_key=idempotency_key,
-            destination_chain=destination_chain,
-            wait_for_completion=wait_for_completion,
-            timeout_seconds=timeout_seconds,
-            **kwargs,
+            recipient=recipient,
+            method=PaymentMethod.TRANSFER,
+            status=PaymentStatus.FAILED,
+            error="Payment routing failed unexpectedly",
+            guards_passed=guards_passed or [],
         )
-
-        if guards_passed:
-            result.guards_passed = guards_passed
-
-        return result
 
     async def simulate(
         self,
@@ -137,7 +198,13 @@ class PaymentRouter:
         destination_chain = kwargs.get("destination_chain")
 
         # Find adapter
-        adapter = self._find_adapter(recipient, source_network=source_network, destination_chain=destination_chain, **kwargs)
+        adapter = self._find_adapter(
+            recipient,
+            source_network=source_network,
+            destination_chain=destination_chain,
+            amount=amount_decimal,
+            **kwargs,
+        )
 
         if not adapter:
             return SimulationResult(

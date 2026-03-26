@@ -5,7 +5,7 @@ Provides Distributed Circuit Breakers and Retry mechanisms.
 """
 
 from .circuit import CircuitBreaker, CircuitOpenError, CircuitState
-from .retry import retry_policy, execute_with_retry
+from .retry import execute_with_retry, retry_policy
 
 __all__ = [
     "CircuitBreaker",

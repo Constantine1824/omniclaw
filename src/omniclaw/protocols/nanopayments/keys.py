@@ -17,9 +17,9 @@ from __future__ import annotations
 import base64
 import os
 
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
 
 from omniclaw.protocols.nanopayments.exceptions import (
     KeyEncryptionError,

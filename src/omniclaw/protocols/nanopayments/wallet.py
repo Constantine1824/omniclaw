@@ -22,6 +22,7 @@ Note:
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import web3
@@ -36,6 +37,9 @@ from omniclaw.protocols.nanopayments.signing import EIP3009Signer
 from omniclaw.protocols.nanopayments.types import (
     DepositResult,
     GatewayBalance,
+    PaymentRequirements,
+    PaymentRequirementsExtra,
+    PaymentRequirementsKind,
     WithdrawResult,
 )
 
@@ -590,20 +594,14 @@ class GatewayWalletManager:
         """
         Transfer USDC to another address on the SAME chain via Circle's API.
 
-        NOT YET IMPLEMENTED: This requires integration with Circle's Gateway
-        transfer API. Use initiate_trustless_withdrawal() for on-chain withdrawal.
-
         Args:
             amount_usdc: Amount in USDC decimal string.
             recipient_address: Destination EOA address on the same chain.
-
-        Raises:
-            NotImplementedError: Always. This feature is not yet implemented.
         """
-        raise NotImplementedError(
-            "Same-chain Gateway transfers via API are not yet implemented. "
-            "Use initiate_trustless_withdrawal() for on-chain withdrawal, "
-            "or deposit() + nanopayment settlement for off-chain transfers."
+        return await self._transfer_via_gateway_settlement(
+            amount_usdc=amount_usdc,
+            destination_chain=self._network,
+            recipient_address=recipient_address,
         )
 
     async def transfer_crosschain(
@@ -615,22 +613,70 @@ class GatewayWalletManager:
         """
         Transfer USDC to another address on a DIFFERENT chain via Circle's API.
 
-        NOT YET IMPLEMENTED: This requires integration with Circle's Gateway
-        cross-chain transfer API. Use the CCTP GatewayAdapter for cross-chain
-        transfers, or initiate_trustless_withdrawal() for on-chain withdrawal.
-
         Args:
             amount_usdc: Amount in USDC decimal string.
             destination_chain: Target CAIP-2 chain (e.g., 'eip155:137' for Polygon).
             recipient_address: Destination address on the target chain.
-
-        Raises:
-            NotImplementedError: Always. This feature is not yet implemented.
         """
-        raise NotImplementedError(
-            "Cross-chain Gateway transfers via API are not yet implemented. "
-            "Use the CCTP GatewayAdapter for cross-chain transfers, "
-            "or initiate_trustless_withdrawal() for on-chain withdrawal."
+        return await self._transfer_via_gateway_settlement(
+            amount_usdc=amount_usdc,
+            destination_chain=destination_chain,
+            recipient_address=recipient_address,
+        )
+
+    async def _transfer_via_gateway_settlement(
+        self,
+        amount_usdc: str,
+        destination_chain: str,
+        recipient_address: str,
+    ) -> WithdrawResult:
+        """Execute a transfer by signing EIP-3009 authorization and settling via Gateway API."""
+        if not recipient_address or not re.fullmatch(r"0x[a-fA-F0-9]{40}", recipient_address):
+            raise WithdrawError(reason=f"Invalid recipient address: {recipient_address!r}")
+        if recipient_address.lower() == self._address.lower():
+            raise WithdrawError(
+                reason=(
+                    "Self-transfer via Gateway settlement is not supported. "
+                    "Use initiate_trustless_withdrawal() for own-wallet withdrawals."
+                )
+            )
+        if not destination_chain.startswith("eip155:"):
+            raise WithdrawError(reason=f"Invalid destination chain (expected CAIP-2): {destination_chain!r}")
+
+        amount_atomic = self._decimal_to_atomic(amount_usdc)
+        if amount_atomic <= 0:
+            raise WithdrawError(reason=f"Amount must be positive. Got: {amount_usdc!r}")
+
+        try:
+            verifying_contract = await self._client.get_verifying_contract(destination_chain)
+            usdc_address = await self._client.get_usdc_address(destination_chain)
+
+            req_kind = PaymentRequirementsKind(
+                scheme="exact",
+                network=destination_chain,
+                asset=usdc_address,
+                amount=str(amount_atomic),
+                max_timeout_seconds=345600,
+                pay_to=recipient_address,
+                extra=PaymentRequirementsExtra(
+                    name="GatewayWalletBatched",
+                    version="1",
+                    verifying_contract=verifying_contract,
+                ),
+            )
+            requirements = PaymentRequirements(x402_version=2, accepts=(req_kind,))
+            payload = self._signer.sign_transfer_with_authorization(req_kind)
+            settle = await self._client.settle(payload=payload, requirements=requirements)
+        except Exception as exc:
+            raise WithdrawError(reason=f"Gateway settlement transfer failed: {exc}") from exc
+
+        return WithdrawResult(
+            mint_tx_hash=settle.transaction,
+            amount=amount_atomic,
+            formatted_amount=f"{self._atomic_to_decimal(amount_atomic)} USDC",
+            source_chain=self._network,
+            destination_chain=destination_chain,
+            recipient=recipient_address,
         )
 
     # -------------------------------------------------------------------------

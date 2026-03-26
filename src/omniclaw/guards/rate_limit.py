@@ -7,10 +7,11 @@ Uses StorageBackend for persistence.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
-from omniclaw.events import event_emitter
 
+from omniclaw.events import event_emitter
 from omniclaw.guards.base import Guard, GuardResult, PaymentContext
 
 if TYPE_CHECKING:
@@ -122,6 +123,7 @@ class RateLimitGuard(Guard):
             return
         import json
 
+        wallet_id = "<unknown>"
         try:
             data = json.loads(token)
             if data.get("v") != 2:
@@ -132,8 +134,12 @@ class RateLimitGuard(Guard):
             window_keys = self._get_window_keys(wallet_id, ts)
             for key in window_keys.values():
                 await self._storage.atomic_add("guard_state", key, "-1")
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).error(
+                f"RateLimitGuard.release() failed for wallet {wallet_id}: {exc}. "
+                f"Rate limit counter may be permanently inflated.",
+                exc_info=True,
+            )
 
     # Legacy / Read Helpers
     async def get_minute_count(self, wallet_id: str) -> int:

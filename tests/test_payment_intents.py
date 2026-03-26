@@ -39,6 +39,7 @@ async def test_create_and_confirm_intent(client):
     client._router.pay = AsyncMock()
 
     from omniclaw.core.types import PaymentStatus, SimulationResult
+
     client._router.simulate.return_value = SimulationResult(
         would_succeed=True, route=PaymentMethod.TRANSFER
     )
@@ -49,7 +50,7 @@ async def test_create_and_confirm_intent(client):
         amount=Decimal("50.0"),
         recipient="0xabc",
         method=PaymentMethod.TRANSFER,
-        status=PaymentStatus.COMPLETED
+        status=PaymentStatus.COMPLETED,
     )
 
     # 1. Create intent
@@ -58,7 +59,7 @@ async def test_create_and_confirm_intent(client):
         recipient="0xabc",
         amount=Decimal("50.0"),
         purpose="Subscription",
-        expires_in=3600
+        expires_in=3600,
     )
 
     assert intent.status == PaymentIntentStatus.REQUIRES_CONFIRMATION
@@ -77,7 +78,7 @@ async def test_create_and_confirm_intent(client):
     # 4. Verify intent status is updated and funds are released
     updated_intent = await client.intent.get(intent.id)
     assert updated_intent.status == PaymentIntentStatus.SUCCEEDED
-    
+
     reserved_after = await client._reservation.get_reserved_total("wallet-1")
     assert reserved_after == Decimal("0.0")
 
@@ -88,15 +89,14 @@ async def test_intent_prevents_double_spend(client):
     client._wallet_service.get_usdc_balance_amount = lambda wid: Decimal("100.0")
     client._router.simulate = AsyncMock()
     from omniclaw.core.types import SimulationResult
+
     client._router.simulate.return_value = SimulationResult(
         would_succeed=True, route=PaymentMethod.TRANSFER
     )
 
     # Create intent for 80 USDC
     intent = await client.intent.create(
-        wallet_id="wallet-2",
-        recipient="0xabc",
-        amount=Decimal("80.0")
+        wallet_id="wallet-2", recipient="0xabc", amount=Decimal("80.0")
     )
 
     assert intent.status == PaymentIntentStatus.REQUIRES_CONFIRMATION
@@ -106,7 +106,8 @@ async def test_intent_prevents_double_spend(client):
         await client.pay(
             wallet_id="wallet-2",
             recipient="0xdef",
-            amount=Decimal("30.0")
+            amount=Decimal("30.0"),
+            validate_recipient=False,
         )
 
     assert "Insufficient available balance" in str(exc.value)
@@ -117,6 +118,7 @@ async def test_intent_prevents_double_spend(client):
     # Now direct pay should succeed (mocking the pay method)
     client._router.pay = AsyncMock()
     from omniclaw.core.types import PaymentResult, PaymentStatus
+
     client._router.pay.return_value = PaymentResult(
         success=True,
         transaction_id="tx-456",
@@ -124,13 +126,11 @@ async def test_intent_prevents_double_spend(client):
         amount=Decimal("30.0"),
         recipient="0xdef",
         method=PaymentMethod.TRANSFER,
-        status=PaymentStatus.COMPLETED
+        status=PaymentStatus.COMPLETED,
     )
 
     res = await client.pay(
-        wallet_id="wallet-2",
-        recipient="0xdef",
-        amount=Decimal("30.0")
+        wallet_id="wallet-2", recipient="0xdef", amount=Decimal("30.0"), validate_recipient=False
     )
     assert res.success is True
 
@@ -141,14 +141,13 @@ async def test_cancel_intent(client):
     client._wallet_service.get_usdc_balance_amount = lambda wid: Decimal("100.0")
     client._router.simulate = AsyncMock()
     from omniclaw.core.types import SimulationResult
+
     client._router.simulate.return_value = SimulationResult(
         would_succeed=True, route=PaymentMethod.TRANSFER
     )
 
     intent = await client.intent.create(
-        wallet_id="wallet-3",
-        recipient="0xabc",
-        amount=Decimal("40.0")
+        wallet_id="wallet-3", recipient="0xabc", amount=Decimal("40.0")
     )
 
     # Verify reservation
@@ -167,5 +166,5 @@ async def test_cancel_intent(client):
     # Attempting to confirm canceled intent should raise error
     with pytest.raises(ValidationError) as exc:
         await client.intent.confirm(intent.id)
-    
+
     assert "Cannot be confirmed" in str(exc.value) or "cannot be confirmed" in str(exc.value)

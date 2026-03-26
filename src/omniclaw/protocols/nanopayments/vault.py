@@ -35,7 +35,6 @@ from omniclaw.protocols.nanopayments.exceptions import (
 from omniclaw.protocols.nanopayments.keys import NanoKeyStore
 
 if TYPE_CHECKING:
-    from omniclaw.storage.base import StorageBackend
     from omniclaw.protocols.nanopayments.types import (
         GatewayBalance,
         PaymentPayload,
@@ -43,6 +42,7 @@ if TYPE_CHECKING:
         ResourceInfo,
     )
     from omniclaw.protocols.nanopayments.wallet import GatewayWalletManager
+    from omniclaw.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ _NANO_KEYS_COLLECTION: str = "nano_keys"
 # Default networks by environment
 _DEFAULT_NETWORKS = {
     "mainnet": "eip155:1",  # Ethereum mainnet
-    "testnet": "eip155:11155111",  # Sepolia testnet
+    "testnet": "eip155:5042002",  # Arc testnet (Circle Gateway default)
 }
 
 
@@ -76,7 +76,7 @@ class NanoKeyVault:
     def __init__(
         self,
         entity_secret: str,
-        storage_backend: "StorageBackend",
+        storage_backend: StorageBackend,
         circle_api_key: str,
         nanopayments_environment: str = "testnet",
         default_network: str | None = None,
@@ -309,11 +309,12 @@ class NanoKeyVault:
             Does NOT return the actual keys.
         """
         records = await self._storage.query(_NANO_KEYS_COLLECTION, limit=1000)
-        return [
-            record.get("key", record.get("alias"))
-            for record in records
-            if "key" in record or "alias" in record
-        ]
+        aliases: list[str] = []
+        for record in records:
+            alias = record.get("_key") or record.get("key") or record.get("alias")
+            if alias:
+                aliases.append(str(alias))
+        return aliases
 
     async def has_key(self, alias: str | None = None) -> bool:
         """
@@ -337,12 +338,12 @@ class NanoKeyVault:
 
     async def sign(
         self,
-        requirements: "PaymentRequirementsKind",
+        requirements: PaymentRequirementsKind,
         amount_atomic: int | None = None,
         alias: str | None = None,
         network: str | None = None,
-        resource: "ResourceInfo | None" = None,
-    ) -> "PaymentPayload":
+        resource: ResourceInfo | None = None,
+    ) -> PaymentPayload:
         """
         Sign an EIP-3009 payment authorization.
 
@@ -376,6 +377,12 @@ class NanoKeyVault:
 
         encrypted_key = record["encrypted_key"]
         signer = self._keystore.create_signer(encrypted_key)
+        key_network = network or record.get("network") or self._default_network
+        if key_network != requirements.network:
+            raise ValueError(
+                f"Network mismatch for key '{resolved_alias}': key={key_network}, "
+                f"requirements={requirements.network}"
+            )
 
         # Amount: use provided value or fall back to requirements.amount
         if amount_atomic is None:
@@ -449,7 +456,7 @@ class NanoKeyVault:
     # Balance queries
     # -------------------------------------------------------------------------
 
-    async def get_balance(self, alias: str | None = None) -> "GatewayBalance":
+    async def get_balance(self, alias: str | None = None) -> GatewayBalance:
         """
         Get the Gateway wallet balance for a key's address.
 
@@ -507,7 +514,7 @@ class NanoKeyVault:
         gateway_address: str | None = None,
         usdc_address: str | None = None,
         cctp_gateway_address: str | None = None,
-    ) -> "GatewayWalletManager":
+    ) -> GatewayWalletManager:
         """
         Create a GatewayWalletManager for on-chain operations.
 
@@ -530,6 +537,7 @@ class NanoKeyVault:
             NoDefaultKeyError: If alias is None and no default key is set.
         """
         import os
+
         from omniclaw.protocols.nanopayments.wallet import GatewayWalletManager
 
         # Get the real private key from the vault
@@ -537,10 +545,10 @@ class NanoKeyVault:
 
         if rpc_url is None:
             # Try to get from environment
-            network = self._default_network
+            key_network = await self.get_network(alias)
 
             # Check for network-specific RPC URLs in environment
-            env_rpc = os.environ.get(f"RPC_URL_{network.replace(':', '_').upper()}")
+            env_rpc = os.environ.get(f"RPC_URL_{key_network.replace(':', '_').upper()}")
             if env_rpc:
                 rpc_url = env_rpc
             else:
@@ -555,7 +563,7 @@ class NanoKeyVault:
 
         return GatewayWalletManager(
             private_key=private_key,
-            network=self._default_network,
+            network=await self.get_network(alias),
             rpc_url=rpc_url,
             nanopayment_client=self._client,
             gateway_address=gateway_address,

@@ -32,13 +32,49 @@ from typing import Any
 
 from omniclaw.seller.facilitator import (
     CircleGatewayFacilitator as CircleImpl,
-    VerifyResult as VR,
+)
+from omniclaw.seller.facilitator import (
     SettleResult as SR,
 )
-
+from omniclaw.seller.facilitator import (
+    VerifyResult as VR,
+)
 
 # Re-export Circle's implementation
 CircleGatewayFacilitator = CircleImpl
+
+
+async def _fetch_supported_networks(
+    client: Any,
+    base_url: str,
+    headers: dict[str, str],
+    candidate_paths: list[str],
+) -> list[dict[str, Any]]:
+    """Fetch supported networks from known provider endpoints."""
+    last_error: Exception | None = None
+    for path in candidate_paths:
+        try:
+            response = await client.get(f"{base_url}{path}", headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            if isinstance(data, dict):
+                if isinstance(data.get("supportedNetworks"), list):
+                    return data["supportedNetworks"]
+                if isinstance(data.get("networks"), list):
+                    return data["networks"]
+                if isinstance(data.get("kinds"), list):
+                    return data["kinds"]
+                if isinstance(data.get("data"), list):
+                    return data["data"]
+            if isinstance(data, list):
+                return data
+            last_error = ValueError(f"Unsupported /supported schema from {path}")
+        except Exception as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise RuntimeError(f"Unable to fetch supported networks: {last_error}") from last_error
+    raise RuntimeError("Unable to fetch supported networks: no candidate paths configured")
 
 
 @dataclass
@@ -219,7 +255,13 @@ class CoinbaseFacilitator(BaseFacilitator):
             )
 
     async def get_supported_networks(self) -> list:
-        return []
+        headers = {"Authorization": f"Bearer {self._api_key}", "Accept": "application/json"}
+        return await _fetch_supported_networks(
+            client=self._client,
+            base_url=self._base_url,
+            headers=headers,
+            candidate_paths=["/v2/x402/supported", "/v1/x402/supported", "/x402/supported"],
+        )
 
     async def close(self):
         await self._client.aclose()
@@ -310,7 +352,13 @@ class OrderNFacilitator(BaseFacilitator):
             )
 
     async def get_supported_networks(self) -> list:
-        return []
+        headers = {"Authorization": f"Bearer {self._api_key}", "Accept": "application/json"}
+        return await _fetch_supported_networks(
+            client=self._client,
+            base_url=self._base_url,
+            headers=headers,
+            candidate_paths=["/v1/x402/supported", "/x402/supported", "/api/v1/x402/supported"],
+        )
 
     async def close(self):
         await self._client.aclose()
@@ -401,7 +449,13 @@ class RBXFacilitator(BaseFacilitator):
             )
 
     async def get_supported_networks(self) -> list:
-        return []
+        headers = {"Authorization": f"Bearer {self._api_key}", "Accept": "application/json"}
+        return await _fetch_supported_networks(
+            client=self._client,
+            base_url=self._base_url,
+            headers=headers,
+            candidate_paths=["/x402/supported", "/v1/x402/supported", "/api/v1/x402/supported"],
+        )
 
     async def close(self):
         await self._client.aclose()
@@ -494,7 +548,13 @@ class ThirdwebFacilitator(BaseFacilitator):
             )
 
     async def get_supported_networks(self) -> list:
-        return []
+        headers = {"Authorization": f"Bearer {self._api_key}", "Accept": "application/json"}
+        return await _fetch_supported_networks(
+            client=self._client,
+            base_url=self._base_url,
+            headers=headers,
+            candidate_paths=["/api/v1/x402/supported", "/v1/x402/supported", "/x402/supported"],
+        )
 
     async def close(self):
         await self._client.aclose()
@@ -572,221 +632,4 @@ __all__ = [
     "SettleResult",
     "create_facilitator",
     "SUPPORTED_FACILITATORS",
-]
-
-
-class BaseFacilitator(ABC):
-    """
-    Abstract base class for x402 facilitators.
-
-    Facilitators handle payment verification and settlement on behalf of sellers.
-    """
-
-    @property
-    @abstractmethod
-    def name(self) -> str:
-        """Facilitator name."""
-        pass
-
-    @property
-    @abstractmethod
-    def base_url(self) -> str:
-        """API base URL."""
-        pass
-
-    @property
-    @abstractmethod
-    def environment(self) -> str:
-        """Environment (testnet/mainnet)."""
-        pass
-
-    @abstractmethod
-    async def verify(
-        self,
-        payment_payload: dict[str, Any],
-        payment_requirements: dict[str, Any],
-    ) -> VerifyResult:
-        """
-        Verify payment payload (read-only).
-
-        Args:
-            payment_payload: The payment payload from client
-            payment_requirements: The payment requirements from 402 response
-
-        Returns:
-            VerifyResult with validation status
-        """
-        pass
-
-    @abstractmethod
-    async def settle(
-        self,
-        payment_payload: dict[str, Any],
-        payment_requirements: dict[str, Any],
-    ) -> SettleResult:
-        """
-        Settle payment (execute on-chain).
-
-        Args:
-            payment_payload: The payment payload from client
-            payment_requirements: The payment requirements from 402 response
-
-        Returns:
-            SettleResult with settlement status
-        """
-        pass
-
-    @abstractmethod
-    async def get_supported_networks(self) -> list[dict[str, Any]]:
-        """Get supported networks."""
-        pass
-
-    @abstractmethod
-    async def close(self) -> None:
-        """Close HTTP client."""
-        pass
-
-
-class CoinbaseFacilitator(BaseFacilitator):
-    """
-    Coinbase CDP x402 Facilitator.
-
-    Uses Coinbase's facilitator for payment verification and settlement.
-    https://docs.cdp.coinbase.com/x402/docs/facilitator
-    """
-
-    COINBASE_TESTNET = "https://api.cdp.coinbase.com/platform"
-    COINBASE_MAINNET = "https://api.cdp.coinbase.com/platform"
-
-    def __init__(
-        self,
-        api_key: str,
-        environment: str = "testnet",
-        timeout: float = 30.0,
-    ):
-        """Initialize Coinbase facilitator."""
-        import httpx
-
-        self._api_key = api_key
-        self._environment = environment
-        self._timeout = timeout
-        self._base_url = (
-            self.COINBASE_TESTNET if environment == "testnet" else self.COINBASE_MAINNET
-        )
-        self._client = httpx.AsyncClient(timeout=timeout)
-
-    @property
-    def name(self) -> str:
-        return "coinbase"
-
-    @property
-    def base_url(self) -> str:
-        return self._base_url
-
-    @property
-    def environment(self) -> str:
-        return self._environment
-
-    async def verify(
-        self,
-        payment_payload: dict[str, Any],
-        payment_requirements: dict[str, Any],
-    ) -> VerifyResult:
-        """Verify payment via Coinbase."""
-        url = f"{self._base_url}/v2/x402/verify"
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._api_key}",
-        }
-
-        body = {
-            "paymentPayload": payment_payload,
-            "paymentRequirements": payment_requirements,
-        }
-
-        try:
-            response = await self._client.post(url, json=body, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-
-            return VerifyResult(
-                is_valid=data.get("isValid", False),
-                payer=data.get("payer"),
-                invalid_reason=data.get("invalidReason"),
-            )
-        except Exception as e:
-            return VerifyResult(
-                is_valid=False,
-                payer=None,
-                invalid_reason=str(e),
-            )
-
-    async def settle(
-        self,
-        payment_payload: dict[str, Any],
-        payment_requirements: dict[str, Any],
-    ) -> SettleResult:
-        """Settle payment via Coinbase."""
-        url = f"{self._base_url}/v2/x402/settle"
-
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._api_key}",
-        }
-
-        body = {
-            "paymentPayload": payment_payload,
-            "paymentRequirements": payment_requirements,
-        }
-
-        try:
-            response = await self._client.post(url, json=body, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-
-            return SettleResult(
-                success=data.get("success", False),
-                transaction=data.get("transaction"),
-                network=data.get("network"),
-                error_reason=data.get("errorReason"),
-                payer=data.get("payer"),
-            )
-        except Exception as e:
-            return SettleResult(
-                success=False,
-                transaction=None,
-                network=None,
-                error_reason=str(e),
-                payer=None,
-            )
-
-    async def get_supported_networks(self) -> list[dict[str, Any]]:
-        """Get supported networks from Coinbase."""
-        url = f"{self._base_url}/v2/x402/supported"
-
-        headers = {"Authorization": f"Bearer {self._api_key}"}
-
-        try:
-            response = await self._client.get(url, headers=headers)
-            response.raise_for_status()
-            data = response.json()
-            return data.get("supportedNetworks", [])
-        except Exception:
-            return []
-
-    async def close(self) -> None:
-        """Close HTTP client."""
-        await self._client.aclose()
-
-
-# Alias for backwards compatibility
-
-__all__ = [
-    "BaseFacilitator",
-    "CircleGatewayFacilitator",
-    "CoinbaseFacilitator",
-    "VerifyResult",
-    "SettleResult",
-    "create_facilitator",
 ]

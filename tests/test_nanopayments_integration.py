@@ -765,7 +765,7 @@ class TestNanopaymentProtocolAdapterIntegration:
 
         assert result.success is False
         assert result.status.value == "failed"
-        assert "falling back" in result.error
+        assert "Nanopayment failed" in result.error
 
 
 # =============================================================================
@@ -833,7 +833,7 @@ class TestGatewayWalletManagerIntegration:
 
     @pytest.mark.asyncio
     async def test_withdraw_creates_withdrawal_tx(self, mock_client: MagicMock):
-        """withdraw() raises NotImplementedError (transfer stubs not yet implemented)."""
+        """withdraw() returns structured transfer result via Gateway settlement."""
         private_key, address = generate_eoa_keypair()
 
         with patch("omniclaw.protocols.nanopayments.wallet.web3") as mock_web3_module:
@@ -863,12 +863,13 @@ class TestGatewayWalletManagerIntegration:
                 nanopayment_client=mock_client,
             )
 
-            with pytest.raises(NotImplementedError):
-                await manager.withdraw(
-                    amount_usdc="5.00",
-                    destination_chain=None,
-                    recipient=None,
-                )
+            result = await manager.withdraw(
+                amount_usdc="5.00",
+                destination_chain=None,
+                recipient="0x" + "b" * 40,
+            )
+            assert result.amount == 5_000_000
+            assert result.destination_chain == "eip155:5042002"
 
 
 # =============================================================================
@@ -3377,7 +3378,7 @@ class TestNanopaymentProtocolAdapterCoverage:
 
         assert result.success is False
         assert result.status.value == "failed"
-        assert "falling back" in result.error
+        assert "Nanopayment failed" in result.error
 
     @pytest.mark.asyncio
     async def test_simulate_returns_would_succeed(self, mock_client: MagicMock):

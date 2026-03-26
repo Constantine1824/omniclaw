@@ -107,8 +107,12 @@ class ReservationService:
                         await self.release(res.get("intent_id", ""))
                         continue
                 except Exception:
-                    # Ignore ill-formatted edge case logs until later to avoid exceptions on balance counts
-                    pass
+                    logger.warning(
+                        "Malformed reservation expiry for intent %s; releasing reservation defensively.",
+                        res.get("intent_id"),
+                    )
+                    await self.release(res.get("intent_id", ""))
+                    continue
 
             amount_str = res.get("amount", "0")
             try:

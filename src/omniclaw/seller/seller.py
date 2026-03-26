@@ -26,13 +26,48 @@ Usage:
 import base64
 import hashlib
 import json
+import logging
+import os
+import re
 import time
+import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal, InvalidOperation
 from enum import Enum
-from typing import Any, Callable
+from typing import Any
 
 import httpx
+from eth_account import Account
+from eth_account.messages import encode_typed_data
+
+logger = logging.getLogger(__name__)
+
+_EVM_ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
+USDC_DECIMAL_PLACES = 6
+
+
+def _parse_price_to_decimal(price: str) -> Decimal:
+    """Parse price string to Decimal USD amount."""
+    cleaned = price.strip().lstrip("$").strip()
+    if not cleaned:
+        raise ValueError(f"Empty price: {price!r}")
+    try:
+        val = Decimal(cleaned)
+    except InvalidOperation:
+        raise ValueError(f"Invalid price: {price!r}")
+    if val <= 0:
+        raise ValueError(f"Price must be positive: {price!r}")
+    return val
+
+
+def _usd_to_atomic(price_usd: Decimal) -> int:
+    """Convert USD Decimal to USDC atomic units (6 decimals)."""
+    atomic = price_usd * Decimal(10 ** USDC_DECIMAL_PLACES)
+    if atomic != int(atomic):
+        raise ValueError(f"Price has too many decimals: {price_usd}")
+    return int(atomic)
 
 
 # =============================================================================
@@ -78,7 +113,7 @@ class Endpoint:
     """Protected endpoint configuration."""
 
     path: str
-    price_usd: float
+    price_usd: Decimal
     description: str
     schemes: list[PaymentScheme] = field(
         default_factory=lambda: [PaymentScheme.EXACT, PaymentScheme.GATEWAY_BATCHED]
@@ -174,14 +209,56 @@ class Seller:
 
         self._endpoints: dict[str, Endpoint] = {}
         self._payments: dict[str, PaymentRecord] = {}
+        self._used_nonces: dict[tuple[str, str, str], int] = {}
+        self._nonce_lock = asyncio.Lock()
         self._facilitator = facilitator
 
-        # Get gateway contract from env or use default
-        import os
-
-        self._gateway_contract = os.environ.get(
-            "CIRCLE_GATEWAY_CONTRACT", "0x1234567890abcdef1234567890abcdef12345678"
+        self._gateway_contract = os.environ.get("CIRCLE_GATEWAY_CONTRACT", "")
+        self._strict_gateway_contract = (
+            os.environ.get("OMNICLAW_SELLER_STRICT_GATEWAY_CONTRACT", "false").lower() == "true"
         )
+        if not self._gateway_contract:
+            logger.warning(
+                "CIRCLE_GATEWAY_CONTRACT env var not set. "
+                "GatewayWalletBatched scheme will not work until this is configured. "
+                "Fetch it from Circle Gateway /v1/x402/supported endpoint."
+            )
+
+        self._nonce_redis_client: Any | None = None
+        self._nonce_redis_url = os.environ.get("OMNICLAW_SELLER_NONCE_REDIS_URL")
+        runtime_env = os.environ.get("OMNICLAW_ENV", "").lower()
+        self._is_production_env = runtime_env in {"prod", "production", "mainnet"}
+        self._require_distributed_nonce = (
+            os.environ.get("OMNICLAW_SELLER_REQUIRE_DISTRIBUTED_NONCE", "false").lower() == "true"
+        )
+        self._nonce_ttl_floor_seconds = int(
+            os.environ.get("OMNICLAW_SELLER_NONCE_TTL_FLOOR_SECONDS", "300")
+        )
+        if self._nonce_redis_url:
+            try:
+                import redis.asyncio as redis_asyncio
+
+                self._nonce_redis_client = redis_asyncio.from_url(
+                    self._nonce_redis_url,
+                    decode_responses=True,
+                )
+                logger.info("Seller nonce replay protection using Redis backend")
+            except Exception as exc:
+                if self._require_distributed_nonce:
+                    raise RuntimeError(
+                        "Distributed nonce protection required but Redis client init failed"
+                    ) from exc
+                logger.warning("Redis nonce backend unavailable, falling back to local memory: %s", exc)
+        elif self._require_distributed_nonce:
+            raise RuntimeError(
+                "OMNICLAW_SELLER_REQUIRE_DISTRIBUTED_NONCE=true but "
+                "OMNICLAW_SELLER_NONCE_REDIS_URL is not set"
+            )
+        elif self._is_production_env:
+            raise RuntimeError(
+                "Production seller requires distributed nonce protection. "
+                "Set OMNICLAW_SELLER_NONCE_REDIS_URL (or explicitly run non-production env)."
+            )
 
     def protect(
         self,
@@ -204,8 +281,7 @@ class Seller:
             def weather():
                 return {"temp": 72}
         """
-        # Parse price: "$0.001" -> 0.001
-        price_usd = float(price.replace("$", ""))
+        price_usd = _parse_price_to_decimal(price)
 
         # Default to accepting both
         if schemes is None:
@@ -241,10 +317,17 @@ class Seller:
             description: Description
             schemes: Payment schemes
         """
-        price_usd = float(price.replace("$", ""))
+        price_usd = _parse_price_to_decimal(price)
 
         if schemes is None:
             schemes = [PaymentScheme.EXACT, PaymentScheme.GATEWAY_BATCHED]
+
+        if self._strict_gateway_contract and PaymentScheme.GATEWAY_BATCHED in schemes:
+            if not self._gateway_contract:
+                raise ValueError(
+                    "GatewayWalletBatched configured but CIRCLE_GATEWAY_CONTRACT is not set. "
+                    "Set CIRCLE_GATEWAY_CONTRACT or disable GatewayWalletBatched for this endpoint."
+                )
 
         self._endpoints[path] = Endpoint(
             path=path,
@@ -255,7 +338,7 @@ class Seller:
 
     def _create_accepts(self, endpoint: Endpoint) -> list[dict]:
         """Create accepts array for an endpoint."""
-        amount_atomic = int(endpoint.price_usd * 1_000_000)
+        amount_atomic = _usd_to_atomic(endpoint.price_usd)
         accepts = []
 
         for scheme in endpoint.schemes:
@@ -272,23 +355,76 @@ class Seller:
                     }
                 )
             elif scheme == PaymentScheme.GATEWAY_BATCHED:
+                if not self._gateway_contract:
+                    logger.warning(
+                        f"Skipping GatewayWalletBatched for {endpoint.path}: "
+                        f"CIRCLE_GATEWAY_CONTRACT not configured."
+                    )
+                    continue
                 accepts.append(
                     {
-                        "scheme": "GatewayWalletBatched",
+                        "scheme": "exact",
                         "network": self.config.network,
                         "asset": self.config.usdc_contract,
                         "amount": str(amount_atomic),
                         "payTo": self.config.seller_address,
                         "maxTimeoutSeconds": 300,
                         "extra": {
-                            "name": "USDC",
-                            "version": "2",
+                            "name": "GatewayWalletBatched",
+                            "version": "1",
                             "verifyingContract": self._gateway_contract,
                         },
                     }
                 )
 
         return accepts
+
+    async def _check_and_mark_nonce(
+        self,
+        *,
+        network: str,
+        payer: str,
+        nonce: str,
+        valid_before: int,
+    ) -> bool:
+        """Atomically mark nonce usage; returns False when nonce is already used."""
+        now = int(time.time())
+        ttl = max((valid_before - now) + self._nonce_ttl_floor_seconds, self._nonce_ttl_floor_seconds)
+
+        if self._nonce_redis_client is not None:
+            key = f"omniclaw:seller:nonce:{network}:{payer}:{nonce}"
+            result = await self._nonce_redis_client.set(key, "1", ex=ttl, nx=True)
+            return bool(result)
+
+        async with self._nonce_lock:
+            self._prune_local_nonces(now)
+            nonce_key = (network, payer, nonce)
+            expiry = self._used_nonces.get(nonce_key)
+            if expiry is not None and expiry > now:
+                return False
+            self._used_nonces[nonce_key] = now + ttl
+            return True
+
+    def _prune_local_nonces(self, now: int | None = None) -> None:
+        """Drop expired in-memory nonce markers."""
+        current = now or int(time.time())
+        expired = [key for key, expiry in self._used_nonces.items() if expiry <= current]
+        for key in expired:
+            del self._used_nonces[key]
+
+    def _check_local_nonce_used(self, *, network: str, payer: str, nonce: str) -> bool:
+        """Check in-memory nonce usage for sync verification paths."""
+        now = int(time.time())
+        self._prune_local_nonces(now)
+        expiry = self._used_nonces.get((network, payer, nonce))
+        return bool(expiry and expiry > now)
+
+    def _mark_local_nonce(self, *, network: str, payer: str, nonce: str, valid_before: int) -> None:
+        """Mark in-memory nonce usage for sync verification paths."""
+        now = int(time.time())
+        ttl = max((valid_before - now) + self._nonce_ttl_floor_seconds, self._nonce_ttl_floor_seconds)
+        self._prune_local_nonces(now)
+        self._used_nonces[(network, payer, nonce)] = now + ttl
 
     def create_402_response(self, path: str, url: str) -> tuple[dict, str]:
         """Create 402 response for a path."""
@@ -346,6 +482,16 @@ class Seller:
                     settle_payment=settle_payment,
                 )
 
+            is_valid, error = self._validate_payment_fields(
+                payment_payload=payment_payload,
+                accepted=accepted,
+                authorization=authorization,
+                verify_signature=verify_signature,
+                signature=signature,
+            )
+            if not is_valid:
+                return False, error, None
+
             # Get buyer address
             buyer_address = authorization.get("from", "").lower()
 
@@ -374,16 +520,14 @@ class Seller:
             if to_address != self.config.seller_address.lower():
                 return False, "Wrong recipient", None
 
-            # Verify EIP-3009 signature if requested
-            if verify_signature and signature:
-                is_valid_sig, sig_error = self._verify_eip3009_signature(
-                    authorization=authorization,
-                    signature=signature,
-                    network=accepted.get("network", self.config.network),
-                    verifying_contract=accepted.get("extra", {}).get("verifyingContract", ""),
-                )
-                if not is_valid_sig:
-                    return False, f"Invalid signature: {sig_error}", None
+            nonce = str(authorization.get("nonce", ""))
+            network = str(accepted.get("network", self.config.network))
+            if nonce and self._check_local_nonce_used(
+                network=network,
+                payer=buyer_address,
+                nonce=nonce,
+            ):
+                return False, "Nonce already used", None
 
             # Create payment record
             record = PaymentRecord(
@@ -399,6 +543,13 @@ class Seller:
 
             # Store payment
             self._payments[payment_id] = record
+            if nonce:
+                self._mark_local_nonce(
+                    network=network,
+                    payer=buyer_address,
+                    nonce=nonce,
+                    valid_before=valid_before,
+                )
 
             # Send webhook
             if self.config.webhook_url:
@@ -434,7 +585,7 @@ class Seller:
             scheme = payment_payload.get("scheme")
             payment_data = payment_payload.get("payload", {})
             authorization = payment_data.get("authorization", {})
-            payment_data.get("signature", "")
+            signature = payment_data.get("signature", "")
 
             # Use Circle Gateway facilitator if available
             if self._facilitator:
@@ -467,6 +618,19 @@ class Seller:
                     buyer_address = result.payer or ""
                     status = PaymentStatus.VERIFIED
 
+                nonce = str(authorization.get("nonce", ""))
+                valid_before = int(authorization.get("validBefore", 0))
+                network = str(accepted.get("network", self.config.network))
+                if nonce:
+                    nonce_marked = await self._check_and_mark_nonce(
+                        network=network,
+                        payer=buyer_address.lower(),
+                        nonce=nonce,
+                        valid_before=valid_before,
+                    )
+                    if not nonce_marked:
+                        return False, "Nonce already used", None
+
                 payment_id = hashlib.sha256(f"{buyer_address}{time.time()}".encode()).hexdigest()[
                     :16
                 ]
@@ -491,6 +655,16 @@ class Seller:
                 return True, "", record
 
             # Non-facilitator path (local verification)
+            is_valid, error = self._validate_payment_fields(
+                payment_payload=payment_payload,
+                accepted=accepted,
+                authorization=authorization,
+                verify_signature=verify_signature,
+                signature=signature,
+            )
+            if not is_valid:
+                return False, error, None
+
             buyer_address = authorization.get("from", "").lower()
             payment_id = hashlib.sha256(f"{buyer_address}{time.time()}".encode()).hexdigest()[:16]
 
@@ -513,6 +687,18 @@ class Seller:
             if to_address != self.config.seller_address.lower():
                 return False, "Wrong recipient", None
 
+            nonce = str(authorization.get("nonce", ""))
+            valid_before = int(authorization.get("validBefore", 0))
+            network = str(accepted.get("network", self.config.network))
+            nonce_marked = await self._check_and_mark_nonce(
+                network=network,
+                payer=buyer_address,
+                nonce=nonce,
+                valid_before=valid_before,
+            )
+            if not nonce_marked:
+                return False, "Nonce already used", None
+
             record = PaymentRecord(
                 id=payment_id,
                 scheme=scheme,
@@ -525,7 +711,6 @@ class Seller:
             )
 
             self._payments[payment_id] = record
-
             if self.config.webhook_url:
                 self._send_webhook(record)
 
@@ -538,8 +723,7 @@ class Seller:
         self,
         authorization: dict,
         signature: str,
-        network: str,
-        verifying_contract: str,
+        accepted: dict,
     ) -> tuple[bool, str]:
         """
         Verify EIP-3009 TransferWithAuthorization signature.
@@ -554,24 +738,28 @@ class Seller:
             (is_valid, error_message)
         """
         try:
-            from eth_account import Account  # noqa: F401
-        except ImportError:
-            return True, "Signature verification skipped - dependencies not installed"
-
-        try:
             # Parse network to get chain ID
             chain_id = 84532  # Default to Base Sepolia
+            network = str(accepted.get("network", self.config.network))
             if ":" in network:
                 chain_id = int(network.split(":")[-1])
 
+            extra = accepted.get("extra", {}) or {}
+            domain_name = str(extra.get("name", "USDC"))
+            domain_version = str(extra.get("version", "2"))
+            verifying_contract = str(extra.get("verifyingContract", "")).strip()
+            if not verifying_contract:
+                verifying_contract = str(accepted.get("asset", self.config.usdc_contract))
+
+            if not _EVM_ADDRESS_RE.match(verifying_contract):
+                return False, f"Invalid verifyingContract: {verifying_contract}"
+
             # Build EIP-712 domain
             domain = {
-                "name": "USDC",
-                "version": "2",
+                "name": domain_name,
+                "version": domain_version,
                 "chainId": chain_id,
-                "verifyingContract": verifying_contract
-                if verifying_contract
-                else "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                "verifyingContract": verifying_contract,
             }
 
             # Build EIP-712 message for TransferWithAuthorization
@@ -605,7 +793,8 @@ class Seller:
             }
 
             # Recover signer from signature
-            signer = Account.recover_message(message, signature=signature)
+            signable = encode_typed_data(full_message=message)
+            signer = Account.recover_message(signable, signature=signature)
             expected_signer = authorization.get("from", "").lower()
 
             if signer.lower() != expected_signer:
@@ -615,6 +804,81 @@ class Seller:
 
         except Exception as e:
             return False, f"Signature verification error: {str(e)}"
+
+    def _validate_payment_fields(
+        self,
+        payment_payload: dict[str, Any],
+        accepted: dict[str, Any],
+        authorization: dict[str, Any],
+        verify_signature: bool,
+        signature: str,
+    ) -> tuple[bool, str]:
+        """Validate payload against server-selected accepted requirements."""
+        payer = str(authorization.get("from", "")).lower()
+        payee = str(authorization.get("to", "")).lower()
+        nonce = str(authorization.get("nonce", ""))
+        network = str(accepted.get("network", self.config.network))
+
+        if not _EVM_ADDRESS_RE.match(payer):
+            return False, "Invalid payer address"
+        if not _EVM_ADDRESS_RE.match(payee):
+            return False, "Invalid recipient address"
+        if not nonce:
+            return False, "Missing nonce"
+        expected_scheme = str(accepted.get("scheme", "exact")).lower()
+        payload_scheme = str(payment_payload.get("scheme", "exact")).lower()
+        if payload_scheme and payload_scheme != expected_scheme:
+            return False, f"Scheme mismatch: {payload_scheme} != {expected_scheme}"
+
+        expected_network = str(accepted.get("network", self.config.network))
+        payload_network = str(payment_payload.get("network", expected_network))
+        if payload_network and payload_network != expected_network:
+            return False, f"Network mismatch: {payload_network} != {expected_network}"
+
+        required_payto = str(accepted.get("payTo", self.config.seller_address)).lower()
+        if required_payto != self.config.seller_address.lower():
+            return False, "Server payTo mismatch"
+        if payee != required_payto:
+            return False, "Wrong recipient"
+
+        if verify_signature:
+            if not signature:
+                return False, "Missing signature"
+            is_valid_sig, sig_error = self._verify_eip3009_signature(
+                authorization=authorization,
+                signature=signature,
+                accepted=accepted,
+            )
+            if not is_valid_sig:
+                return False, f"Invalid signature: {sig_error}"
+
+        return True, ""
+
+    def _select_accepted_for_payload(self, payload: dict[str, Any], path: str) -> dict[str, Any] | None:
+        """Pick server-defined accepted requirement matching incoming payload fields."""
+        endpoint = self._endpoints.get(path)
+        if not endpoint:
+            return None
+        accepts = self._create_accepts(endpoint)
+        if not accepts:
+            return None
+
+        payload_network = str(payload.get("network", ""))
+        payload_scheme = str(payload.get("scheme", "exact")).lower()
+        payload_data = payload.get("payload", {}) or {}
+        auth = payload_data.get("authorization", {}) or {}
+        payload_value = str(auth.get("value", ""))
+
+        for accepted in accepts:
+            if payload_scheme and payload_scheme != str(accepted.get("scheme", "")).lower():
+                continue
+            if payload_network and payload_network != str(accepted.get("network", "")):
+                continue
+            accepted_amount = str(accepted.get("amount", "0"))
+            if payload_value and int(payload_value) < int(accepted_amount):
+                continue
+            return accepted
+        return None
 
     def _verify_with_facilitator(
         self,
@@ -693,6 +957,22 @@ class Seller:
 
             buyer_address = result.payer or ""
 
+        authorization = ((payment_payload.get("payload") or {}).get("authorization") or {})
+        nonce = str(authorization.get("nonce", ""))
+        valid_before = int(authorization.get("validBefore", 0))
+        network = str(accepted.get("network", self.config.network))
+        if nonce:
+            nonce_marked = asyncio.run(
+                self._check_and_mark_nonce(
+                    network=network,
+                    payer=buyer_address.lower(),
+                    nonce=nonce,
+                    valid_before=valid_before,
+                )
+            )
+            if not nonce_marked:
+                return False, "Nonce already used", None
+
         payment_id = hashlib.sha256(f"{buyer_address}{time.time()}".encode()).hexdigest()[:16]
         paid = int(payment_requirements["amount"])
         status = PaymentStatus.SETTLED if settle_payment else PaymentStatus.VERIFIED
@@ -757,6 +1037,25 @@ class Seller:
         except Exception as e:
             print(f"Webhook failed: {e}")
 
+    def _build_payment_response_header(
+        self,
+        *,
+        success: bool,
+        payer: str,
+        transaction: str = "",
+        error_reason: str | None = None,
+    ) -> str:
+        """Build base64-encoded PAYMENT-RESPONSE header payload."""
+        body: dict[str, Any] = {
+            "success": success,
+            "transaction": transaction,
+            "network": self.config.network,
+            "payer": payer,
+        }
+        if error_reason:
+            body["errorReason"] = error_reason
+        return base64.b64encode(json.dumps(body).encode()).decode()
+
     def get_payment(self, payment_id: str) -> PaymentRecord | None:
         """Get payment by ID."""
         return self._payments.get(payment_id)
@@ -815,9 +1114,9 @@ class Seller:
             host: Host to bind to
         """
         try:
+            import uvicorn
             from fastapi import FastAPI, Request
             from fastapi.responses import JSONResponse
-            import uvicorn
         except ImportError:
             print("FastAPI required: pip install fastapi uvicorn")
             return
@@ -828,7 +1127,7 @@ class Seller:
         )
 
         # Add endpoints
-        for path, endpoint in self._endpoints.items():
+        for path, _endpoint in self._endpoints.items():
             methods = ["GET"]
 
             # Create route handler
@@ -847,12 +1146,34 @@ class Seller:
                 # Verify payment
                 try:
                     payload = json.loads(base64.b64decode(payment))
-                    accepted = payload.get("accepted", {})
+                    payer = str(
+                        (((payload.get("payload") or {}).get("authorization") or {}).get("from"))
+                        or ""
+                    ).lower()
+                    accepted = self._select_accepted_for_payload(payload, path)
+                    if not accepted:
+                        headers, body = self.create_402_response(path, str(request.url))
+                        headers["PAYMENT-RESPONSE"] = self._build_payment_response_header(
+                            success=False,
+                            payer=payer,
+                            error_reason="no_matching_payment_requirement",
+                        )
+                        body = json.dumps({"error": "No server-accepted payment kind matched payload"})
+                        return JSONResponse(
+                            status_code=402,
+                            content=json.loads(body),
+                            headers=headers,
+                        )
 
-                    is_valid, error, record = self.verify_payment(payload, accepted)
+                    is_valid, error, record = await self.verify_payment_async(payload, accepted)
 
                     if not is_valid:
                         headers, body = self.create_402_response(path, str(request.url))
+                        headers["PAYMENT-RESPONSE"] = self._build_payment_response_header(
+                            success=False,
+                            payer=payer,
+                            error_reason=error or "verification_failed",
+                        )
                         body = json.dumps({"error": error})
                         return JSONResponse(
                             status_code=402,
@@ -861,10 +1182,26 @@ class Seller:
                         )
 
                     # Payment valid - return data
-                    return {"status": "ok", "payment_id": record.id if record else None}
+                    success_headers = {
+                        "PAYMENT-RESPONSE": self._build_payment_response_header(
+                            success=True,
+                            payer=payer,
+                            transaction=record.id if record else "",
+                        )
+                    }
+                    return JSONResponse(
+                        status_code=200,
+                        content={"status": "ok", "payment_id": record.id if record else None},
+                        headers=success_headers,
+                    )
 
                 except Exception as e:
                     headers, body = self.create_402_response(path, str(request.url))
+                    headers["PAYMENT-RESPONSE"] = self._build_payment_response_header(
+                        success=False,
+                        payer="",
+                        error_reason="payload_parse_error",
+                    )
                     return JSONResponse(
                         status_code=402,
                         content={"error": str(e)},
@@ -966,91 +1303,3 @@ __all__ = [
     "Endpoint",
     "SellerConfig",
 ]
-
-
-# =============================================================================
-# LEGACY SIMPLE SELLER (backwards compatibility)
-# =============================================================================
-
-
-class SimpleSeller:
-    """Legacy simple seller for backwards compatibility."""
-
-    def __init__(self, seller_address: str, accepts_circle: bool = True):
-        self.seller_address = seller_address
-        self.accepts_circle = accepts_circle
-        self._endpoints = {}
-
-    def add_endpoint(self, path: str, price: str, description: str = None):
-        price_cents = int(price.replace("$", "").replace(".", ""))
-        amount = price_cents * 100
-
-        accepts = [
-            {
-                "scheme": "exact",
-                "network": "eip155:84532",
-                "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-                "amount": str(amount),
-                "payTo": self.seller_address,
-                "maxTimeoutSeconds": 300,
-                "extra": {"name": "USDC", "version": "2"},
-            }
-        ]
-
-        if self.accepts_circle:
-            accepts.append(
-                {
-                    "scheme": "GatewayWalletBatched",
-                    "network": "eip155:84532",
-                    "asset": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
-                    "amount": str(amount),
-                    "payTo": self.seller_address,
-                    "maxTimeoutSeconds": 300,
-                    "extra": {
-                        "name": "USDC",
-                        "version": "2",
-                        "verifyingContract": "0x1234567890abcdef",
-                    },
-                }
-            )
-
-        self._endpoints[path] = {
-            "accepts": accepts,
-            "description": description or f"Access to {path}",
-            "price": price,
-        }
-
-    def protected(self, price: str, description: str = None):
-        def decorator(func):
-            self.add_endpoint(f"/{func.__name__}", price, description)
-            return func
-
-        return decorator
-
-    def check_payment(self, payment_header):
-        if not payment_header:
-            return False, "No payment"
-        return True, ""
-
-    def create_402_response(self, path: str, url: str):
-        import base64
-        import json
-
-        endpoint = self._endpoints.get(path, {})
-
-        payment_required = {
-            "x402Version": 2,
-            "error": "Payment required",
-            "resource": {
-                "url": url,
-                "description": endpoint.get("description", path),
-                "mimeType": "application/json",
-            },
-            "accepts": endpoint.get("accepts", []),
-        }
-
-        header = base64.b64encode(json.dumps(payment_required).encode()).decode()
-        return {"payment-required": header}, '{"error": "Payment required"}'
-
-    def get_endpoints(self):
-        return self._endpoints

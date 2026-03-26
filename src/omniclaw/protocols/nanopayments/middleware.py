@@ -51,7 +51,6 @@ from omniclaw.protocols.nanopayments.types import (
     SupportedKind,
 )
 
-
 # =============================================================================
 # SETTLEMENT RESPONSE (x402 v2 PAYMENT-RESPONSE header format)
 # =============================================================================
@@ -118,10 +117,7 @@ def parse_price(price_str: str) -> int:
     original = price_str.strip()
 
     # Remove dollar sign
-    if original.startswith("$"):
-        numeric = original[1:].strip()
-    else:
-        numeric = original
+    numeric = original[1:].strip() if original.startswith("$") else original
 
     # Check if it's a decimal (has a decimal point)
     if "." in numeric:
@@ -374,6 +370,18 @@ class GatewayMiddleware:
         gateway_kind = None
         if payload.payload.authorization:
             auth = payload.payload.authorization
+            expected_amount = str(parse_price(price_usd))
+            if str(auth.value) != expected_amount:
+                raise PaymentRequiredHTTPException(
+                    status_code=402,
+                    detail={
+                        "error": (
+                            f"Amount mismatch. Expected {expected_amount} atomic units, "
+                            f"got {auth.value}."
+                        )
+                    },
+                    headers={},
+                )
             # Build requirements from payload
             from omniclaw.protocols.nanopayments.types import (
                 PaymentRequirementsExtra,
@@ -395,17 +403,18 @@ class GatewayMiddleware:
                     usdc_address = kind.usdc_address
                     break
 
-            # Fallback: use first supported kind if no exact match
-            if matching_kind is None and supported_kinds:
-                matching_kind = supported_kinds[0]
-                verifying_contract = matching_kind.verifying_contract
-                usdc_address = matching_kind.usdc_address
-
             # If no supported kinds at all, we can't process this payment
             if not supported_kinds:
                 raise PaymentRequiredHTTPException(
                     status_code=502,
                     detail={"error": "No supported payment networks available"},
+                    headers={},
+                )
+
+            if matching_kind is None:
+                raise PaymentRequiredHTTPException(
+                    status_code=402,
+                    detail={"error": f"Unsupported payment network: {payload.network}"},
                     headers={},
                 )
 
@@ -428,6 +437,13 @@ class GatewayMiddleware:
                     version="1",
                     verifying_contract=verifying_contract,
                 ),
+            )
+
+        if gateway_kind is None:
+            raise PaymentRequiredHTTPException(
+                status_code=402,
+                detail={"error": "Missing authorization in PAYMENT-SIGNATURE payload"},
+                headers={},
             )
 
         requirements = PaymentRequirements(

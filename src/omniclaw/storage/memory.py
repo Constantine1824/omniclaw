@@ -208,6 +208,29 @@ class InMemoryStorage(StorageBackend):
             return True
         return False
 
+    async def refresh_lock(
+        self,
+        key: str,
+        token: str,
+        ttl: int = 30,
+    ) -> bool:
+        """Refresh lock TTL if token matches current owner."""
+        import time
+
+        if "_locks" not in self._data:
+            return False
+
+        locks = self._data["_locks"]
+        lock_info = locks.get(key)
+        if not lock_info:
+            return False
+
+        if lock_info.get("token") != token:
+            return False
+
+        lock_info["expiry"] = time.time() + ttl
+        return True
+
     async def health_check(self) -> bool:
         """Always healthy for in-memory."""
         return True

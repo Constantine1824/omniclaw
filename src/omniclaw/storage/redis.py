@@ -143,6 +143,14 @@ class RedisStorage(StorageBackend):
     end
     """
 
+    _REFRESH_LOCK_SCRIPT = """
+    if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("expire", KEYS[1], ARGV[2])
+    else
+        return 0
+    end
+    """
+
     async def acquire_lock(
         self,
         key: str,
@@ -192,6 +200,18 @@ class RedisStorage(StorageBackend):
             # Fallback: simple delete (legacy callers)
             result = await client.delete(redis_key)
             return result > 0
+
+    async def refresh_lock(
+        self,
+        key: str,
+        token: str,
+        ttl: int = 30,
+    ) -> bool:
+        """Refresh lock TTL if token matches current owner."""
+        client = self._get_client()
+        redis_key = f"{self._prefix}:locks:{key}"
+        result = await client.eval(self._REFRESH_LOCK_SCRIPT, 1, redis_key, token, ttl)
+        return int(result) > 0
 
     async def query(
         self,

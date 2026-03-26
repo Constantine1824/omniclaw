@@ -7,8 +7,8 @@ Simple guard that blocks transactions above a maximum amount.
 from __future__ import annotations
 
 from decimal import Decimal
-from omniclaw.events import event_emitter
 
+from omniclaw.events import event_emitter
 from omniclaw.guards.base import Guard, GuardResult, PaymentContext
 
 

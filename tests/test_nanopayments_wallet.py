@@ -49,11 +49,11 @@ def _mock_web3(address: str, chain_id: int = 5042002):
 
 
 def _make_client_mock(
-    gateway_addr: str = "0xGatewayContract00000000000001",
-    usdc_addr: str = "0xUsdcContract0000000000000000000001",
+    gateway_addr: str = "0x" + "c" * 40,
+    usdc_addr: str = "0x" + "d" * 40,
 ) -> MagicMock:
     """Mock NanopaymentClient."""
-    from omniclaw.protocols.nanopayments.types import GatewayBalance
+    from omniclaw.protocols.nanopayments.types import GatewayBalance, SettleResponse
 
     mock = MagicMock(spec=NanopaymentClient)
     mock.get_verifying_contract = AsyncMock(return_value=gateway_addr)
@@ -64,6 +64,14 @@ def _make_client_mock(
             available=4500000,
             formatted_total="5.000000 USDC",
             formatted_available="4.500000 USDC",
+        )
+    )
+    mock.settle = AsyncMock(
+        return_value=SettleResponse(
+            success=True,
+            transaction="batch_tx_123",
+            payer="0x" + "1" * 40,
+            error_reason=None,
         )
     )
     return mock
@@ -239,7 +247,7 @@ class TestDeposit:
 class TestWithdraw:
     @pytest.mark.asyncio
     async def test_withdraw_same_chain(self):
-        """Same-chain withdrawal raises NotImplementedError (stubs not implemented)."""
+        """Same-chain withdrawal delegates to Gateway settle flow."""
         private_key, _ = generate_eoa_keypair()
         client = _make_client_mock()
         mock_w3 = _mock_web3("")
@@ -253,12 +261,14 @@ class TestWithdraw:
                 rpc_url="https://rpc.example.com",
                 nanopayment_client=client,
             )
-            with pytest.raises(NotImplementedError):
-                await manager.withdraw("2.50")
+            result = await manager.withdraw("2.50", recipient="0x" + "b" * 40)
+            assert result.amount == 2_500_000
+            assert result.destination_chain == "eip155:5042002"
+            assert result.mint_tx_hash == "batch_tx_123"
 
     @pytest.mark.asyncio
     async def test_withdraw_cross_chain(self):
-        """Cross-chain withdrawal raises NotImplementedError (stubs not implemented)."""
+        """Cross-chain withdrawal delegates to Gateway settle flow."""
         private_key, _ = generate_eoa_keypair()
         client = _make_client_mock()
         mock_w3 = _mock_web3("")
@@ -271,16 +281,18 @@ class TestWithdraw:
                 rpc_url="https://rpc.example.com",
                 nanopayment_client=client,
             )
-            with pytest.raises(NotImplementedError):
-                await manager.withdraw(
-                    "1.00",
-                    destination_chain="eip155:1",
-                    recipient="0x" + "c" * 40,
-                )
+            result = await manager.withdraw(
+                "1.00",
+                destination_chain="eip155:1",
+                recipient="0x" + "c" * 40,
+            )
+            assert result.amount == 1_000_000
+            assert result.destination_chain == "eip155:1"
+            assert result.recipient == "0x" + "c" * 40
 
     @pytest.mark.asyncio
     async def test_withdraw_same_chain_returns_result(self):
-        """Same-chain withdraw raises NotImplementedError (API stubs not implemented)."""
+        """Same-chain withdraw returns a structured result."""
         private_key, _ = generate_eoa_keypair()
         client = _make_client_mock()
 
@@ -290,12 +302,14 @@ class TestWithdraw:
             rpc_url="https://rpc.example.com",
             nanopayment_client=client,
         )
-        with pytest.raises(NotImplementedError):
-            await manager.withdraw(
-                "1.00",
-                destination_chain="eip155:5042002",  # Same chain
-                recipient="0x" + "a" * 40,
-            )
+        result = await manager.withdraw(
+            "1.00",
+            destination_chain="eip155:5042002",  # Same chain
+            recipient="0x" + "a" * 40,
+        )
+        assert result.amount == 1_000_000
+        assert result.destination_chain == "eip155:5042002"
+        assert result.recipient == "0x" + "a" * 40
 
 
 # =============================================================================
@@ -714,7 +728,7 @@ class TestTransferMethods:
 
     @pytest.mark.asyncio
     async def test_transfer_to_address_same_chain(self):
-        """transfer_to_address() raises NotImplementedError (not yet implemented)."""
+        """transfer_to_address() executes Gateway settlement transfer."""
         private_key, _ = generate_eoa_keypair()
         client = _make_client_mock()
 
@@ -728,15 +742,16 @@ class TestTransferMethods:
                 nanopayment_client=client,
             )
 
-            with pytest.raises(NotImplementedError):
-                await manager.transfer_to_address(
-                    "10.00",
-                    recipient_address="0x" + "a" * 40,
-                )
+            result = await manager.transfer_to_address(
+                "10.00",
+                recipient_address="0x" + "a" * 40,
+            )
+            assert result.amount == 10_000_000
+            assert result.destination_chain == "eip155:5042002"
 
     @pytest.mark.asyncio
     async def test_transfer_crosschain(self):
-        """transfer_crosschain() raises NotImplementedError (not yet implemented)."""
+        """transfer_crosschain() executes Gateway settlement transfer."""
         private_key, _ = generate_eoa_keypair()
         client = _make_client_mock()
 
@@ -750,12 +765,13 @@ class TestTransferMethods:
                 nanopayment_client=client,
             )
 
-            with pytest.raises(NotImplementedError):
-                await manager.transfer_crosschain(
-                    "5.00",
-                    destination_chain="eip155:8453",  # Base
-                    recipient_address="0x" + "b" * 40,
-                )
+            result = await manager.transfer_crosschain(
+                "5.00",
+                destination_chain="eip155:8453",  # Base
+                recipient_address="0x" + "b" * 40,
+            )
+            assert result.amount == 5_000_000
+            assert result.destination_chain == "eip155:8453"
 
     @pytest.mark.asyncio
     async def test_get_onchain_balance(self):

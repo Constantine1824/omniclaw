@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import os
+import re
 import uuid
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -170,6 +172,9 @@ class OmniClaw:
                 self._logger.warning(f"Failed to sync managed credentials store: {exc}")
 
         self._storage = get_storage()
+        self._require_trust_gate = (
+            os.environ.get("OMNICLAW_REQUIRE_TRUST_GATE", "false").lower() == "true"
+        )
         self._ledger = Ledger(self._storage)
         self._fund_lock = FundLockService(self._storage)
         self._guard_manager = GuardManager(self._storage)
@@ -363,7 +368,7 @@ class OmniClaw:
 
         return self._gateway_middleware
 
-    def sell(self, price: str) -> "Any":
+    def sell(self, price: str) -> Any:
         """
         Decorator factory for marking a FastAPI route as a paid endpoint.
 
@@ -532,7 +537,7 @@ class OmniClaw:
         from omniclaw.protocols.nanopayments.wallet import GatewayWalletManager
 
         raw_key = await self._nano_vault.get_raw_key(alias=nano_key_alias)
-        net = network or self._config.nanopayments_default_network or "eip155:5042002"
+        net = network or await self._nano_vault.get_network(alias=nano_key_alias)
         manager = GatewayWalletManager(
             private_key=raw_key,
             network=net,
@@ -574,7 +579,7 @@ class OmniClaw:
         from omniclaw.protocols.nanopayments.wallet import GatewayWalletManager
 
         raw_key = await self._nano_vault.get_raw_key(alias=nano_key_alias)
-        net = network or "eip155:5042002"
+        net = network or await self._nano_vault.get_network(alias=nano_key_alias)
         manager = GatewayWalletManager(
             private_key=raw_key,
             network=net,
@@ -856,6 +861,7 @@ class OmniClaw:
         metadata: dict[str, Any] | None = None,
         wait_for_completion: bool = False,
         timeout_seconds: float | None = None,
+        validate_recipient: bool = True,
         **kwargs: Any,
     ) -> PaymentResult:
         """
@@ -878,6 +884,7 @@ class OmniClaw:
             metadata: Additional metadata
             wait_for_completion: Wait for transaction confirmation
             timeout_seconds: Maximum wait time
+            validate_recipient: Validate recipient address/URL format (default: True)
             **kwargs: Additional options
 
         Returns:
@@ -890,11 +897,32 @@ class OmniClaw:
         if amount_decimal <= 0:
             raise ValidationError(f"Payment amount must be positive. Got: {amount_decimal}")
 
+        # Validate recipient format
+        if validate_recipient:
+            if not recipient:
+                raise ValidationError("recipient is required")
+            # EVM address validation (0x + 40 hex chars)
+            if recipient.startswith("0x"):
+                if not re.match(r"^0x[0-9a-fA-F]{40}$", recipient):
+                    raise ValidationError(
+                        f"Invalid EVM address: {recipient!r}. "
+                        f"Must be '0x' followed by exactly 40 hex characters."
+                    )
+            # URL recipients (x402) must be valid HTTPS
+            elif recipient.startswith("http") and not recipient.startswith("https://"):
+                raise ValidationError(f"x402 recipient URL must use HTTPS. Got: {recipient!r}")
+
         idempotency_key = idempotency_key or str(uuid.uuid4())
 
         meta = metadata or {}
         meta["idempotency_key"] = idempotency_key
         meta["strategy"] = strategy.value
+
+        if self._require_trust_gate and self._trust_gate and not self._trust_gate.is_configured:
+            raise ConfigurationError(
+                "OMNICLAW_REQUIRE_TRUST_GATE=true but Trust Gate is not configured. "
+                "Set OMNICLAW_RPC_URL to a real RPC endpoint."
+            )
 
         # ── Trust Gate Check (ERC-8004) ──────────────────────────────
         # check_trust=None → auto (enabled if trust_gate configured and guards not skipped)
@@ -992,7 +1020,12 @@ class OmniClaw:
                 )
 
         # Acquire Fund Lock (Mutex) to prevent double-spend race conditions
-        lock_token = await self._fund_lock.acquire(wallet_id, amount_decimal)
+        lock_ttl_seconds = max(60, int(self._config.transaction_poll_timeout) + 30)
+        lock_token = await self._fund_lock.acquire(
+            wallet_id,
+            amount_decimal,
+            ttl=lock_ttl_seconds,
+        )
         if not lock_token:
             # Could not acquire lock (busy)
             error_msg = "Wallet is busy (locked by another transaction). Please retry."
@@ -1004,6 +1037,18 @@ class OmniClaw:
             )
             raise PaymentError(error_msg)
 
+        lock_heartbeat_stop = asyncio.Event()
+        lock_lost_event = asyncio.Event()
+        lock_heartbeat_task = asyncio.create_task(
+            self._maintain_wallet_lock(
+                wallet_id=wallet_id,
+                lock_token=lock_token,
+                ttl_seconds=lock_ttl_seconds,
+                stop_event=lock_heartbeat_stop,
+                lock_lost_event=lock_lost_event,
+            )
+        )
+
         try:
             # If we are confirming an intent, release its reservation now that we hold the mutex
             if consume_intent_id:
@@ -1013,6 +1058,8 @@ class OmniClaw:
             balance = self._wallet_service.get_usdc_balance_amount(wallet_id)
             reserved_total = await self._reservation.get_reserved_total(wallet_id)
             available = balance - reserved_total
+            if lock_lost_event.is_set():
+                raise PaymentError("Wallet lock lease was lost before execution could start.")
             if amount_decimal > available:
                 error_msg = f"Insufficient available balance (Total: {balance}, Reserved: {reserved_total}, Available: {available})"
                 if guards_chain and reservation_tokens:
@@ -1045,6 +1092,8 @@ class OmniClaw:
 
             # 2. Execute with Strategy
             async with circuit:
+                if lock_lost_event.is_set():
+                    raise PaymentError("Wallet lock lease was lost before payment execution.")
                 if strategy == PaymentStrategy.RETRY_THEN_FAIL:
                     result = await execute_with_retry(
                         self._router.pay,
@@ -1075,6 +1124,8 @@ class OmniClaw:
                         timeout_seconds=timeout_seconds,
                         **kwargs,
                     )
+                if lock_lost_event.is_set():
+                    raise PaymentError("Wallet lock lease was lost during payment execution.")
 
             # 3. Success Handling
             if result.success:
@@ -1114,6 +1165,8 @@ class OmniClaw:
         finally:
             # Release lock in all cases
             if lock_token:
+                lock_heartbeat_stop.set()
+                await lock_heartbeat_task
                 await self._fund_lock.release_with_key(wallet_id, lock_token)
 
     async def _queue_payment(
@@ -1149,7 +1202,7 @@ class OmniClaw:
             await guards_chain.release(reservation_tokens)
 
         return PaymentResult(
-            success=True,  # It was successfully queued
+            success=False,  # Not yet executed — queued for later
             transaction_id=None,
             blockchain_tx=None,
             amount=context.amount,
@@ -1200,6 +1253,16 @@ class OmniClaw:
             )
 
         amount_decimal = Decimal(str(amount))
+
+        if self._require_trust_gate and self._trust_gate and not self._trust_gate.is_configured:
+            return SimulationResult(
+                would_succeed=False,
+                route=PaymentMethod.TRANSFER,
+                reason=(
+                    "OMNICLAW_REQUIRE_TRUST_GATE=true but Trust Gate is not configured. "
+                    "Set OMNICLAW_RPC_URL."
+                ),
+            )
 
         # Check available balance considering reservations
         reserved_total = await self._reservation.get_reserved_total(wallet_id)
@@ -1283,6 +1346,36 @@ class OmniClaw:
         """Detect which payment method would be used for a recipient."""
         return self._router.detect_method(recipient)
 
+    async def _maintain_wallet_lock(
+        self,
+        wallet_id: str,
+        lock_token: str,
+        ttl_seconds: int,
+        stop_event: asyncio.Event,
+        lock_lost_event: asyncio.Event | None = None,
+    ) -> None:
+        """Refresh a wallet lock lease in the background until stop_event is set."""
+        refresh_interval = max(5, ttl_seconds // 3)
+        while True:
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=refresh_interval)
+                return
+            except asyncio.TimeoutError:
+                refreshed = await self._fund_lock.refresh_with_key(
+                    wallet_id=wallet_id,
+                    lock_token=lock_token,
+                    ttl=ttl_seconds,
+                )
+                if not refreshed:
+                    self._logger.error(
+                        "Wallet lock lease refresh failed (wallet=%s). "
+                        "The lock may have been lost before payment flow completed.",
+                        wallet_id,
+                    )
+                    if lock_lost_event is not None:
+                        lock_lost_event.set()
+                    return
+
     @property
     def intents(self) -> PaymentIntentService:
         """Get intent management service."""
@@ -1298,18 +1391,57 @@ class OmniClaw:
         idempotency_key: str | None = None,
         skip_guards: bool = False,
         check_trust: bool | None = None,
+        validate_recipient: bool = True,
         **kwargs: Any,
     ) -> PaymentIntent:
         """Create a Payment Intent (Authorize)."""
         amount_decimal = Decimal(str(amount))
+        if amount_decimal <= 0:
+            raise ValidationError(f"Payment amount must be positive. Got: {amount_decimal}")
+
+        if self._require_trust_gate and self._trust_gate and not self._trust_gate.is_configured:
+            raise ConfigurationError(
+                "OMNICLAW_REQUIRE_TRUST_GATE=true but Trust Gate is not configured. "
+                "Set OMNICLAW_RPC_URL before creating payment intents."
+            )
+
+        # Validate recipient format if enabled
+        if validate_recipient:
+            if not recipient:
+                raise ValidationError("recipient is required")
+            if recipient.startswith("0x"):
+                if not re.match(r"^0x[0-9a-fA-F]{40}$", recipient):
+                    raise ValidationError(
+                        f"Invalid EVM address: {recipient!r}. "
+                        f"Must be '0x' followed by exactly 40 hex characters."
+                    )
+            elif recipient.startswith("http") and not recipient.startswith("https://"):
+                raise ValidationError(f"x402 recipient URL must use HTTPS. Got: {recipient!r}")
 
         # Acquire lock to ensure balance isn't changing while we simulate and reserve
-        lock_token = await self._fund_lock.acquire(wallet_id, amount_decimal)
+        lock_ttl_seconds = max(60, int(self._config.transaction_poll_timeout) + 30)
+        lock_token = await self._fund_lock.acquire(
+            wallet_id, amount_decimal, ttl=lock_ttl_seconds
+        )
         if not lock_token:
             raise PaymentError("Wallet is busy (locked by another transaction). Please retry.")
 
+        lock_heartbeat_stop = asyncio.Event()
+        lock_lost_event = asyncio.Event()
+        lock_heartbeat_task = asyncio.create_task(
+            self._maintain_wallet_lock(
+                wallet_id=wallet_id,
+                lock_token=lock_token,
+                ttl_seconds=lock_ttl_seconds,
+                stop_event=lock_heartbeat_stop,
+                lock_lost_event=lock_lost_event,
+            )
+        )
+
         try:
             # Simulate check (Routing + Guards) strictly
+            if lock_lost_event.is_set():
+                raise PaymentError("Wallet lock lease was lost before intent simulation.")
             sim_result = await self.simulate(
                 wallet_id=wallet_id,
                 recipient=recipient,
@@ -1326,6 +1458,16 @@ class OmniClaw:
                     raise PaymentError(f"Authorization failed: {sim_result.reason}")
 
             # Create Intent
+            if idempotency_key:
+                idempotency_index_key = f"wallet:{wallet_id}:intent_idempotency:{idempotency_key}"
+                existing_map = await self._storage.get("payment_intent_idempotency", idempotency_index_key)
+                if existing_map:
+                    existing_intent_id = existing_map.get("intent_id")
+                    if existing_intent_id:
+                        existing_intent = await self._intent_service.get(existing_intent_id)
+                        if existing_intent is not None:
+                            return existing_intent
+
             metadata = kwargs.copy()
             metadata.update(
                 {
@@ -1365,11 +1507,22 @@ class OmniClaw:
             await self._reservation.reserve(
                 wallet_id, amount_decimal, intent.id, expires_at=intent.expires_at
             )
+            if idempotency_key:
+                idempotency_index_key = f"wallet:{wallet_id}:intent_idempotency:{idempotency_key}"
+                await self._storage.save(
+                    "payment_intent_idempotency",
+                    idempotency_index_key,
+                    {"intent_id": intent.id},
+                )
+            if lock_lost_event.is_set():
+                raise PaymentError("Wallet lock lease was lost before intent reservation completed.")
             intent.reserved_amount = amount_decimal
 
             return intent
         finally:
             if lock_token:
+                lock_heartbeat_stop.set()
+                await lock_heartbeat_task
                 await self._fund_lock.release_with_key(wallet_id, lock_token)
 
     async def confirm_payment_intent(self, intent_id: str) -> PaymentResult:
@@ -1420,6 +1573,7 @@ class OmniClaw:
                 idempotency_key=idempotency_key,
                 check_trust=False,
                 consume_intent_id=intent.id,  # Key part: releases reservation inside the lock
+                validate_recipient=False,  # Intent already validated recipient at creation
                 **exec_kwargs,
             )
 

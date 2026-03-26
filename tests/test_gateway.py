@@ -215,3 +215,63 @@ class TestGetExecutorWallet:
         wallet_service.list_wallets.side_effect = Exception("API error")
         result = await adapter._get_executor_wallet(Network.ARB_SEPOLIA)
         assert result is None
+
+
+class TestCCTPFeeResolution:
+    """Test Iris fee conversion from bps to token units."""
+
+    @pytest.mark.asyncio
+    async def test_resolve_cctp_max_fee_converts_bps_to_units(self, adapter):
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = [{"finalityThreshold": 1000, "minimumFee": 13}]
+
+        class _Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, *args, **kwargs):
+                return mock_response
+
+        with patch("omniclaw.protocols.gateway.httpx.AsyncClient", return_value=_Client()):
+            fee = await adapter._resolve_cctp_max_fee(
+                source_network=Network.ETH_SEPOLIA,
+                source_domain=0,
+                dest_domain=3,
+                finality_threshold=1000,
+                amount_units=1_000_000,  # 1 USDC
+                fallback_fee=0,
+            )
+
+        assert fee == 1300  # 13 bps of 1,000,000
+
+    @pytest.mark.asyncio
+    async def test_resolve_cctp_max_fee_respects_fallback_floor(self, adapter):
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = [{"finalityThreshold": 1000, "minimumFee": 1}]
+
+        class _Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                return False
+
+            async def get(self, *args, **kwargs):
+                return mock_response
+
+        with patch("omniclaw.protocols.gateway.httpx.AsyncClient", return_value=_Client()):
+            fee = await adapter._resolve_cctp_max_fee(
+                source_network=Network.ETH_SEPOLIA,
+                source_domain=0,
+                dest_domain=3,
+                finality_threshold=1000,
+                amount_units=100_000,  # 0.1 USDC
+                fallback_fee=200,  # higher than computed 10
+            )
+
+        assert fee == 200
