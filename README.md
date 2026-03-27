@@ -159,33 +159,54 @@ To build release artifacts with one command:
 ./build.sh
 ```
 
-## Required Environment
+## Quick Setup
 
-Minimum runtime configuration:
+**1. Create a `.env` file:**
 
 ```env
 CIRCLE_API_KEY=your_circle_api_key
 ENTITY_SECRET=your_entity_secret
-OMNICLAW_NETWORK=ARC-TESTNET
 ```
 
-Common optional settings:
+**2. Configure in code:**
 
+```python
+from omniclaw import OmniClaw, Network
+
+client = OmniClaw(network=Network.BASE_SEPOLIA)
+```
+
+Network is set in code, RPC from `.env`.
+
+## Environment Variables
+
+### Required
 ```env
+CIRCLE_API_KEY=your_circle_api_key
+ENTITY_SECRET=your_entity_secret
+```
+
+### Optional (set as needed)
+```env
+# RPC endpoint (for trust gate)
+OMNICLAW_RPC_URL=https://sepolia.base.org
+
+# Storage
 OMNICLAW_STORAGE_BACKEND=redis
 OMNICLAW_REDIS_URL=redis://localhost:6379
-OMNICLAW_LOG_LEVEL=INFO
-OMNICLAW_RPC_URL=https://your-rpc-provider
 ```
 
-Production hardening settings (required when `OMNICLAW_ENV=production` or `mainnet`):
+### Production
+Set `OMNICLAW_ENV=production` - this auto-enables:
+- Mainnet for nanopayments
+- Strict settlement
+- Other production defaults
 
 ```env
 OMNICLAW_ENV=production
-OMNICLAW_STRICT_SETTLEMENT=true
-OMNICLAW_SELLER_NONCE_REDIS_URL=redis://localhost:6379/1
-OMNICLAW_WEBHOOK_VERIFICATION_KEY=your_public_key
-OMNICLAW_WEBHOOK_DEDUP_DB_PATH=/var/lib/omniclaw/webhook_dedup.sqlite3
+OMNICLAW_RPC_URL=https://mainnet-rpc-provider
+OMNICLAW_STORAGE_BACKEND=redis
+OMNICLAW_REDIS_URL=redis://localhost:6379
 ```
 
 Notes:
@@ -268,10 +289,20 @@ omniclaw doctor --json
 
 ## Quick Start
 
+**1. Create `.env`:**
+
+```env
+CIRCLE_API_KEY=your_circle_api_key
+ENTITY_SECRET=your_entity_secret
+OMNICLAW_RPC_URL=https://sepolia.base.org  # for trust gate
+```
+
+**2. Use in code:**
+
 ```python
 from omniclaw import OmniClaw, Network
 
-client = OmniClaw(network=Network.ARC_TESTNET)
+client = OmniClaw(network=Network.BASE_SEPOLIA)
 
 wallet_set, wallet = await client.create_agent_wallet("research-agent")
 

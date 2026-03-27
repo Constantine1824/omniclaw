@@ -133,6 +133,11 @@ class Config:
         env = override_or_env("env", "OMNICLAW_ENV", "development")
         rpc_url = override_or_env("rpc_url", "OMNICLAW_RPC_URL")
 
+        # Auto-detect nanopayments environment from OMNICLAW_ENV
+        # production/prod/mainnet → mainnet, otherwise testnet
+        is_production = env in {"prod", "production", "mainnet"}
+        nanopayments_env = "mainnet" if is_production else "testnet"
+
         # Parse guard limits
         daily_budget = override_or_env("daily_budget", "OMNICLAW_DAILY_BUDGET")
         hourly_budget = override_or_env("hourly_budget", "OMNICLAW_HOURLY_BUDGET")
@@ -158,15 +163,8 @@ class Config:
         )
         confirm_threshold = override_or_env("confirm_threshold", "OMNICLAW_CONFIRM_THRESHOLD")
 
-        # Nanopayments configuration
-        nanopayments_enabled = (
-            overrides.get("nanopayments_enabled")
-            if "nanopayments_enabled" in overrides
-            else (_get_env_var("OMNICLAW_NANOPAYMENTS_ENABLED", "true").lower() == "true")
-        )
-        nanopayments_env = override_or_env(
-            "nanopayments_environment", "OMNICLAW_NANOPAYMENTS_ENV", "testnet"
-        )
+        # Nanopayments configuration (always enabled, env auto-detected from OMNICLAW_ENV)
+        nanopayments_enabled = True
         nanopayments_auto_topup = (
             overrides.get("nanopayments_auto_topup")
             if "nanopayments_auto_topup" in overrides
