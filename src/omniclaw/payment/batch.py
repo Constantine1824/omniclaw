@@ -23,6 +23,21 @@ class BatchPaymentResult:
     results: list[PaymentResult]
     transaction_ids: list[str] = field(default_factory=list)
 
+    @property
+    def total(self) -> int:
+        """Alias for total_count for convenience."""
+        return self.total_count
+
+    @property
+    def successful(self) -> int:
+        """Alias for success_count for convenience."""
+        return self.success_count
+
+    @property
+    def failed(self) -> int:
+        """Alias for failed_count for convenience."""
+        return self.failed_count
+
 
 if TYPE_CHECKING:
     from omniclaw.payment.router import PaymentRouter

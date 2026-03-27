@@ -45,15 +45,37 @@ class PaymentRouter:
     def get_adapters(self) -> list[ProtocolAdapter]:
         return list(self._adapters)
 
-    def detect_method(self, recipient: str, source_network: Network | str | None = None, destination_chain: Network | str | None = None, **kwargs: Any) -> PaymentMethod | None:
+    def detect_method(
+        self,
+        recipient: str,
+        source_network: Network | str | None = None,
+        destination_chain: Network | str | None = None,
+        **kwargs: Any,
+    ) -> PaymentMethod | None:
         for adapter in self._adapters:
-            if adapter.supports(recipient, source_network=source_network, destination_chain=destination_chain, **kwargs):
+            if adapter.supports(
+                recipient,
+                source_network=source_network,
+                destination_chain=destination_chain,
+                **kwargs,
+            ):
                 return adapter.method
         return None
 
-    def _find_adapter(self, recipient: str, source_network: Network | str | None = None, destination_chain: Network | str | None = None, **kwargs: Any) -> ProtocolAdapter | None:
+    def _find_adapter(
+        self,
+        recipient: str,
+        source_network: Network | str | None = None,
+        destination_chain: Network | str | None = None,
+        **kwargs: Any,
+    ) -> ProtocolAdapter | None:
         for adapter in self._adapters:
-            if adapter.supports(recipient, source_network=source_network, destination_chain=destination_chain, **kwargs):
+            if adapter.supports(
+                recipient,
+                source_network=source_network,
+                destination_chain=destination_chain,
+                **kwargs,
+            ):
                 return adapter
         return None
 
@@ -78,9 +100,7 @@ class PaymentRouter:
     @staticmethod
     def _can_fallback(result: PaymentResult) -> bool:
         metadata = result.metadata or {}
-        if metadata.get("fallback_eligible") is True:
-            return True
-        return False
+        return metadata.get("fallback_eligible") is True
 
     async def pay(
         self,
@@ -196,7 +216,7 @@ class PaymentRouter:
         # Resolve source network from wallet - MUST succeed
         wallet = self._wallet_service.get_wallet(wallet_id)
         source_network = Network.from_string(wallet.blockchain)
-        destination_chain = kwargs.get("destination_chain")
+        destination_chain = kwargs.pop("destination_chain", None)
 
         # Find adapter
         adapter = self._find_adapter(

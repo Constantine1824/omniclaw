@@ -5,7 +5,6 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
-
 _PAYMENT_STATUS_NORMALIZATION = {
     "completed": "settled",
     "processing": "pending_settlement",
@@ -39,10 +38,9 @@ def normalize_ledger_entry(entry: dict[str, Any]) -> tuple[dict[str, Any], bool]
         if metadata.get("transaction_id") and "settlement_final" not in metadata:
             metadata["settlement_final"] = False
             changed = True
-    elif status in ("failed", "cancelled"):
-        if "settlement_final" not in metadata:
-            metadata["settlement_final"] = False
-            changed = True
+    elif status in ("failed", "cancelled") and "settlement_final" not in metadata:
+        metadata["settlement_final"] = False
+        changed = True
 
     if metadata != normalized.get("metadata"):
         normalized["metadata"] = metadata

@@ -27,17 +27,14 @@ Usage:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any
 
 from omniclaw.seller.facilitator import (
     CircleGatewayFacilitator as CircleImpl,
 )
 from omniclaw.seller.facilitator import (
-    SettleResult as SR,
-)
-from omniclaw.seller.facilitator import (
-    VerifyResult as VR,
+    SettleResult,
+    VerifyResult,
 )
 
 # Re-export Circle's implementation
@@ -75,20 +72,6 @@ async def _fetch_supported_networks(
     if last_error is not None:
         raise RuntimeError(f"Unable to fetch supported networks: {last_error}") from last_error
     raise RuntimeError("Unable to fetch supported networks: no candidate paths configured")
-
-
-@dataclass
-class VerifyResult(VR):
-    """Result of payment verification."""
-
-    pass
-
-
-@dataclass
-class SettleResult(SR):
-    """Result of payment settlement."""
-
-    pass
 
 
 class BaseFacilitator(ABC):

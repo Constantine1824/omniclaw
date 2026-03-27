@@ -6,14 +6,13 @@ import base64
 import json
 import os
 import sqlite3
-from contextlib import closing
 from collections.abc import Mapping
+from contextlib import closing
 from datetime import datetime
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 

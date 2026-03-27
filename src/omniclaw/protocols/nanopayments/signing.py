@@ -230,7 +230,7 @@ def build_eip712_message(
             raise SigningError(
                 "nonce must be a valid hex string",
                 code="INVALID_NONCE_HEX",
-            )
+            ) from None
 
     return {
         "from": from_address,
@@ -323,7 +323,7 @@ class EIP3009Signer:
         try:
             int(private_key, 16)
         except ValueError:
-            raise InvalidPrivateKeyError("Private key contains invalid hex characters")
+            raise InvalidPrivateKeyError("Private key contains invalid hex characters") from None
 
         self._private_key: str = private_key
 
@@ -332,7 +332,7 @@ class EIP3009Signer:
             self._account = Account.from_key("0x" + private_key)
             self._address: str = self._account.address
         except Exception as e:
-            raise InvalidPrivateKeyError(f"Failed to derive address: {e}")
+            raise InvalidPrivateKeyError(f"Failed to derive address: {e}") from None
 
     def __repr__(self) -> str:
         """Safe representation without private-key material."""
@@ -438,7 +438,7 @@ class EIP3009Signer:
         except (IndexError, ValueError):
             from omniclaw.protocols.nanopayments.exceptions import UnsupportedNetworkError
 
-            raise UnsupportedNetworkError(network)
+            raise UnsupportedNetworkError(network) from None
 
         # Build EIP-712 domain
         domain = build_eip712_domain(
@@ -469,7 +469,7 @@ class EIP3009Signer:
             raise SigningError(
                 f"Failed to sign EIP-712 message: {e}",
                 code="SIGN_FAILED",
-            )
+            ) from None
 
         # Build authorization
         authorization = EIP3009Authorization.create(
@@ -539,7 +539,7 @@ class EIP3009Signer:
             signable = encode_typed_data(full_message=structured_data)
             recovered = Account.recover_message(signable, signature=payload.payload.signature)
         except Exception as e:
-            raise SigningError(f"Signature recovery failed: {e}")
+            raise SigningError(f"Signature recovery failed: {e}") from None
 
         # Verify recovered address matches
         return recovered.lower() == self._address.lower()

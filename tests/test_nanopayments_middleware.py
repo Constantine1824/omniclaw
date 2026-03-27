@@ -23,7 +23,7 @@ from omniclaw.protocols.nanopayments.client import NanopaymentClient
 from omniclaw.protocols.nanopayments.exceptions import InvalidPriceError
 from omniclaw.protocols.nanopayments.middleware import (
     GatewayMiddleware,
-    PaymentRequiredHTTPException,
+    PaymentRequiredHTTPError,
     parse_price,
 )
 from omniclaw.protocols.nanopayments.types import (
@@ -229,7 +229,7 @@ class TestHandle:
             supported_kinds=_make_kinds(),
         )
 
-        with pytest.raises(PaymentRequiredHTTPException) as exc_info:
+        with pytest.raises(PaymentRequiredHTTPError) as exc_info:
             await middleware.handle({}, "$0.001")
 
         assert exc_info.value.status_code == 402
@@ -289,7 +289,7 @@ class TestHandle:
             supported_kinds=_make_kinds(),
         )
 
-        with pytest.raises(PaymentRequiredHTTPException) as exc_info:
+        with pytest.raises(PaymentRequiredHTTPError) as exc_info:
             await middleware.handle(
                 {"payment-signature": "not-valid-base64!!!"},
                 "$0.001",
@@ -306,7 +306,7 @@ class TestHandle:
             supported_kinds=[],  # No networks
         )
 
-        with pytest.raises(PaymentRequiredHTTPException) as exc_info:
+        with pytest.raises(PaymentRequiredHTTPError) as exc_info:
             await middleware.handle({}, "$0.001")
 
         body = exc_info.value.detail

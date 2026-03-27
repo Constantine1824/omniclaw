@@ -273,16 +273,15 @@ class GatewayWalletManager:
             value = Decimal(amount_decimal)
             scaled = value * Decimal(1_000_000)
             if scaled != scaled.to_integral_value():
-                raise ValueError(
-                    f"USDC amount has more than 6 decimal places: {amount_decimal}"
-                )
+                raise ValueError(f"USDC amount has more than 6 decimal places: {amount_decimal}")
             return int(scaled)
         except InvalidOperation:
-            raise ValueError(f"Invalid USDC amount: {amount_decimal}")
+            raise ValueError(f"Invalid USDC amount: {amount_decimal}") from None
 
     def _atomic_to_decimal(self, amount_atomic: int) -> str:
         """Convert atomic units to decimal USDC string."""
         from decimal import Decimal
+
         return str(Decimal(amount_atomic) / Decimal("1000000"))
 
     def _build_tx(
@@ -675,7 +674,9 @@ class GatewayWalletManager:
                 )
             )
         if not destination_chain.startswith("eip155:"):
-            raise WithdrawError(reason=f"Invalid destination chain (expected CAIP-2): {destination_chain!r}")
+            raise WithdrawError(
+                reason=f"Invalid destination chain (expected CAIP-2): {destination_chain!r}"
+            )
 
         amount_atomic = self._decimal_to_atomic(amount_usdc)
         if amount_atomic <= 0:

@@ -70,7 +70,7 @@ class SettlementResponse:
     transaction: str
     network: str
     payer: str
-    errorReason: str | None = None
+    error_reason: str | None = None
 
     def to_base64_header(self) -> str:
         """Encode as base64 for the PAYMENT-RESPONSE header."""
@@ -84,8 +84,8 @@ class SettlementResponse:
             "network": self.network,
             "payer": self.payer,
         }
-        if self.errorReason:
-            d["errorReason"] = self.errorReason
+        if self.error_reason:
+            d["errorReason"] = self.error_reason
         return d
 
 
@@ -128,14 +128,14 @@ def parse_price(price_str: str) -> int:
             value = Decimal(numeric)
             return int(value * Decimal(1_000_000))
         except (ValueError, InvalidOperation, ArithmeticError):
-            raise InvalidPriceError(price=price_str)
+            raise InvalidPriceError(price=price_str) from None
 
     # It's a plain integer — treat as atomic units if >= 1M,
     # otherwise as whole dollars multiplied by 1M
     try:
         value = int(numeric)
     except ValueError:
-        raise InvalidPriceError(price=price_str)
+        raise InvalidPriceError(price=price_str) from None
 
     if value >= 1_000_000:
         return value
@@ -160,6 +160,7 @@ class GatewayMiddleware:
         nanopayment_client: NanopaymentClient for fetching supported networks.
         supported_kinds: Pre-fetched supported payment kinds. If None, fetches automatically.
         auto_fetch_networks: If True, fetches networks on first request if not provided.
+        facilitator: Optional custom facilitator. If None, uses nanopayment_client (Circle).
     """
 
     def __init__(
@@ -168,6 +169,7 @@ class GatewayMiddleware:
         nanopayment_client: NanopaymentClient,
         supported_kinds: list[SupportedKind] | None = None,
         auto_fetch_networks: bool = True,
+        facilitator: Any = None,
     ) -> None:
         # Validate seller_address is a valid EVM address
         if not seller_address:
@@ -182,12 +184,14 @@ class GatewayMiddleware:
         try:
             int(seller_address[2:], 16)
         except ValueError:
-            raise ValueError("seller_address contains invalid hex characters")
+            raise ValueError("seller_address contains invalid hex characters") from None
 
         self._seller_address = seller_address.lower()  # Normalize to lowercase
         self._client = nanopayment_client
         self._supported_kinds: list[SupportedKind] | None = supported_kinds
         self._auto_fetch = auto_fetch_networks
+        self._facilitator = facilitator
+        self._facilitator_name = facilitator.name if facilitator else "circle"
 
     # -------------------------------------------------------------------------
     # Supported networks management
@@ -197,10 +201,68 @@ class GatewayMiddleware:
         """Get supported payment kinds, fetching if needed."""
         if self._supported_kinds is not None:
             return self._supported_kinds
-        self._supported_kinds = await self._client.get_supported(force_refresh=True)
-        if not self._supported_kinds:
-            raise NoNetworksAvailableError()
-        return self._supported_kinds
+
+        # If using custom facilitator (not Circle), try to get from facilitator
+        if self._facilitator:
+            try:
+                facilitator_networks = await self._facilitator.get_supported_networks()
+                # Convert facilitator networks to SupportedKind format
+                supported = []
+                for net in facilitator_networks:
+                    network = net.get("network") or net.get("chainId")
+                    if network:
+                        supported.append(
+                            SupportedKind(
+                                x402_version=2,
+                                scheme="exact",
+                                network=network,
+                                extra={
+                                    "verifyingContract": net.get("verifyingContract", "0x"),
+                                    "usdcAddress": net.get(
+                                        "usdcAddress", "0x036CbD53842c5426634e7929541eC2318f3dCF7e"
+                                    ),
+                                },
+                            )
+                        )
+                if supported:
+                    self._supported_kinds = supported
+                    return self._supported_kinds
+            except Exception:
+                pass
+
+        # Fallback: use default networks for non-Circle facilitators
+        if self._facilitator and not self._supported_kinds:
+            # Use Base Sepolia and Ethereum as defaults for other facilitators
+            self._supported_kinds = [
+                SupportedKind(
+                    x402_version=2,
+                    scheme="exact",
+                    network="eip155:84532",  # Base Sepolia
+                    extra={
+                        "verifyingContract": "0xfab807B4563D2292a72a3e53F5CcF5E3B7eD86d4",
+                        "usdcAddress": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                    },
+                ),
+                SupportedKind(
+                    x402_version=2,
+                    scheme="exact",
+                    network="eip155:1",  # Ethereum Mainnet
+                    extra={
+                        "verifyingContract": "0x097707E2b3cD7C6D6fC8E2D3B5F5cC5E7F7E7E7E7",
+                        "usdcAddress": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+                    },
+                ),
+            ]
+            return self._supported_kinds
+
+        # Use Circle client
+        if self._client:
+            self._supported_kinds = await self._client.get_supported(force_refresh=True)
+            if not self._supported_kinds:
+                raise NoNetworksAvailableError()
+            return self._supported_kinds
+
+        return []
 
     # -------------------------------------------------------------------------
     # Accepts array builder
@@ -262,7 +324,7 @@ class GatewayMiddleware:
     # 402 response builder
     # -------------------------------------------------------------------------
 
-    def _build_402_response(
+    async def _build_402_response(
         self,
         price_usd: str,
     ) -> dict[str, Any]:
@@ -273,7 +335,19 @@ class GatewayMiddleware:
             Dict with x402Version and accepts array.
         """
         price_atomic = parse_price(price_usd)
-        accepts = self._build_accepts_array(price_atomic)
+
+        # Get supported kinds - handle both Circle and other facilitators
+        kinds = None
+        if self._supported_kinds is None and self._facilitator:
+            # Try to get from facilitator
+            kinds = await self._get_supported_kinds()
+        elif self._supported_kinds:
+            kinds = self._supported_kinds
+        elif self._client:
+            # Try to get from Circle client
+            kinds = await self._get_supported_kinds()
+
+        accepts = self._build_accepts_array(price_atomic, kinds)
 
         return {
             "x402Version": X402_VERSION,
@@ -347,9 +421,9 @@ class GatewayMiddleware:
 
         if not sig_header:
             # Build 402 response
-            body = self._build_402_response(price_usd)
+            body = await self._build_402_response(price_usd)
             header_value = self._encode_requirements(body)
-            raise PaymentRequiredHTTPException(
+            raise PaymentRequiredHTTPError(
                 status_code=402,
                 detail=body,
                 headers={"PAYMENT-REQUIRED": header_value},
@@ -359,11 +433,11 @@ class GatewayMiddleware:
         try:
             payload = self._parse_payment_signature(sig_header)
         except ValueError as exc:
-            raise PaymentRequiredHTTPException(
+            raise PaymentRequiredHTTPError(
                 status_code=402,
                 detail={"error": str(exc)},
                 headers={},
-            )
+            ) from None
 
         # Build requirements from the payment payload
         # We need to match the requirements that the buyer used
@@ -372,7 +446,7 @@ class GatewayMiddleware:
             auth = payload.payload.authorization
             expected_amount = str(parse_price(price_usd))
             if str(auth.value) != expected_amount:
-                raise PaymentRequiredHTTPException(
+                raise PaymentRequiredHTTPError(
                     status_code=402,
                     detail={
                         "error": (
@@ -405,21 +479,21 @@ class GatewayMiddleware:
 
             # If no supported kinds at all, we can't process this payment
             if not supported_kinds:
-                raise PaymentRequiredHTTPException(
+                raise PaymentRequiredHTTPError(
                     status_code=502,
                     detail={"error": "No supported payment networks available"},
                     headers={},
                 )
 
             if matching_kind is None:
-                raise PaymentRequiredHTTPException(
+                raise PaymentRequiredHTTPError(
                     status_code=402,
                     detail={"error": f"Unsupported payment network: {payload.network}"},
                     headers={},
                 )
 
             if not verifying_contract or not usdc_address:
-                raise PaymentRequiredHTTPException(
+                raise PaymentRequiredHTTPError(
                     status_code=502,
                     detail={"error": f"Missing contract addresses for network {payload.network}"},
                     headers={},
@@ -440,7 +514,7 @@ class GatewayMiddleware:
             )
 
         if gateway_kind is None:
-            raise PaymentRequiredHTTPException(
+            raise PaymentRequiredHTTPError(
                 status_code=402,
                 detail={"error": "Missing authorization in PAYMENT-SIGNATURE payload"},
                 headers={},
@@ -451,25 +525,38 @@ class GatewayMiddleware:
             accepts=(gateway_kind,) if gateway_kind else (),
         )
 
-        # Settle the payment
+        # Settle the payment - use facilitator if provided, otherwise use Circle client
         try:
-            settle_resp = await self._client.settle(
-                payload=payload,
-                requirements=requirements,
-            )
+            if self._facilitator:
+                # Use custom facilitator (Coinbase, OrderN, RBX, Thirdweb)
+                payload_dict = payload.to_dict()
+                req_dict = requirements.to_dict()
+                settle_resp = await self._facilitator.settle(payload_dict, req_dict)
+                settle_success = settle_resp.success
+                settle_payer = settle_resp.payer
+                settle_tx = settle_resp.transaction
+            else:
+                # Use Circle Gateway (default)
+                settle_resp = await self._client.settle(
+                    payload=payload,
+                    requirements=requirements,
+                )
+                settle_success = settle_resp.success
+                settle_payer = settle_resp.payer
+                settle_tx = settle_resp.transaction
         except Exception as exc:
-            raise PaymentRequiredHTTPException(
+            raise PaymentRequiredHTTPError(
                 status_code=402,
                 detail={"error": f"Settlement failed: {exc}"},
                 headers={},
-            )
+            ) from None
 
         return PaymentInfo(
-            verified=settle_resp.success,
-            payer=settle_resp.payer or payload.payload.authorization.from_address,
+            verified=settle_success,
+            payer=settle_payer or payload.payload.authorization.from_address,
             amount=payload.payload.authorization.value,
             network=payload.network,
-            transaction=settle_resp.transaction,
+            transaction=settle_tx,
         )
 
     # -------------------------------------------------------------------------
@@ -499,12 +586,12 @@ class GatewayMiddleware:
             headers = dict(request.headers)
             try:
                 return await self.handle(headers, price)
-            except PaymentRequiredHTTPException as exc:
+            except PaymentRequiredHTTPError as exc:
                 raise HTTPException(
                     status_code=exc.status_code,
                     detail=exc.detail,
                     headers=exc.headers,
-                )
+                ) from None
 
         return dependency
 
@@ -561,7 +648,7 @@ class GatewayMiddleware:
 # =============================================================================
 
 
-class PaymentRequiredHTTPException(Exception):
+class PaymentRequiredHTTPError(Exception):
     """
     Raised internally to trigger a 402 response.
 

@@ -118,3 +118,7 @@ python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true
+
+[tool.ruff.lint.per-file-ignores]
+# nanopayments __init__ needs specific import order to avoid circular imports
+"src/omniclaw/protocols/nanopayments/__init__.py" = ["I001"]

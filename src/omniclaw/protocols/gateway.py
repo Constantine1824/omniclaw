@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from omniclaw.core.gateway_client import usdc_to_units
 from omniclaw.core.idempotency import derive_idempotency_key
 from omniclaw.core.logging import get_logger
 from omniclaw.core.state_machine import is_irreversible_success_status
@@ -22,7 +23,6 @@ from omniclaw.core.types import (
     PaymentStatus,
     TransactionState,
 )
-from omniclaw.core.gateway_client import usdc_to_units
 from omniclaw.protocols.base import ProtocolAdapter
 
 if TYPE_CHECKING:

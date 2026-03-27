@@ -124,7 +124,7 @@ from omniclaw.protocols.nanopayments import (
     NonceReusedError,
     PaymentPayload,
     PaymentRequiredError,
-    PaymentRequiredHTTPException,
+    PaymentRequiredHTTPError,
     PaymentRequirements,
     SettlementError,
     SignatureVerificationError,
@@ -217,7 +217,7 @@ __all__ = [
     "GatewayWalletManager",
     # Middleware
     "GatewayMiddleware",
-    "PaymentRequiredHTTPException",
+    "PaymentRequiredHTTPError",
     "parse_price",
     # Types
     "DepositResult",

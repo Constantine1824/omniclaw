@@ -96,6 +96,41 @@ print(address)  # e.g., "0x742d..."
 | `POLYGON` | Production |
 | `ETHEREUM` | Production |
 
+### Getting Testnet Funds
+
+To test with real funds, use Base Sepolia testnet:
+
+**1. Configure your environment:**
+
+```bash
+# .env file
+OMNICLAW_NANOPAYMENTS_DEFAULT_NETWORK=eip155:84532  # Base Sepolia
+OMNICLAW_RPC_URL=https://sepolia.base.org
+```
+
+**2. Get ETH (for gas):**
+- https://faucets.chain.link/base-sepolia
+- https://www.alchemy.com/faucets/base-sepolia
+- https://bwarelabs.com/faucets/base-sepolia
+
+**3. Get USDC (for payments):**
+- Go to: https://faucet.circle.com/
+- Select: **Base Sepolia**
+- Click: **Send 20 USDC** (free, every 2 hours)
+
+**4. Fund your wallet:**
+
+```python
+# Get your payment addresses
+wallet_set, wallet = await client.get_or_create_agent_wallet("my-agent")
+
+# Circle wallet address (for transfers)
+circle_address = wallet.address
+
+# Nano/Gateway address (for nanopayments)
+nano_address = await client._nano_vault.get_address(alias=f"wallet-{wallet.id}")
+```
+
 ---
 
 ## 3. Add Guards

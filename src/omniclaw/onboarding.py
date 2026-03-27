@@ -133,7 +133,9 @@ def store_managed_credentials(
     secret_ref = f"{fingerprint}:entity_secret"
     stored_in_keyring = _store_secret_in_keyring(secret_ref, entity_secret)
     runtime_env = os.environ.get("OMNICLAW_ENV", "development").lower()
-    default_plaintext_fallback = "false" if runtime_env in {"prod", "production", "mainnet"} else "true"
+    default_plaintext_fallback = (
+        "false" if runtime_env in {"prod", "production", "mainnet"} else "true"
+    )
     allow_plaintext_fallback = (
         os.environ.get(
             "OMNICLAW_ALLOW_PLAINTEXT_MANAGED_SECRET",
@@ -141,11 +143,11 @@ def store_managed_credentials(
         ).lower()
         == "true"
     )
-    recovery_path = recovery_file or (
-        str(find_recovery_file()) if find_recovery_file() else None
-    )
+    recovery_path = recovery_file or (str(find_recovery_file()) if find_recovery_file() else None)
 
-    stored_entity_secret = entity_secret if (not stored_in_keyring and allow_plaintext_fallback) else None
+    stored_entity_secret = (
+        entity_secret if (not stored_in_keyring and allow_plaintext_fallback) else None
+    )
 
     store["credentials"][fingerprint] = {
         "api_key_fingerprint": fingerprint,
@@ -602,8 +604,9 @@ def doctor(
     """
     resolved_api_key = api_key or os.getenv("CIRCLE_API_KEY")
     env_entity_secret = entity_secret or os.getenv("ENTITY_SECRET")
-    managed_entry = load_managed_credentials(resolved_api_key) if resolved_api_key else None
-    managed_secret = load_managed_entity_secret(resolved_api_key) if resolved_api_key else None
+    if resolved_api_key:
+        load_managed_credentials(resolved_api_key)
+        managed_secret = load_managed_entity_secret(resolved_api_key)
     recovery_file = find_recovery_file()
     config_dir = get_config_dir()
     credentials_path = _managed_credentials_path()
@@ -620,9 +623,7 @@ def doctor(
     if resolved_api_key and not active_secret:
         warnings.append("No active ENTITY_SECRET found for the current API key.")
     if active_secret and not recovery_file:
-        warnings.append(
-            "No Circle recovery file found in the OmniClaw config directory."
-        )
+        warnings.append("No Circle recovery file found in the OmniClaw config directory.")
     if recovery_file:
         mode = stat.S_IMODE(recovery_file.stat().st_mode)
         if mode & 0o077:
@@ -630,9 +631,7 @@ def doctor(
                 f"Recovery file permissions are too broad ({oct(mode)}). Expected 0o600."
             )
     if env_entity_secret and managed_secret and env_entity_secret != managed_secret:
-        warnings.append(
-            "Environment ENTITY_SECRET does not match the managed config copy."
-        )
+        warnings.append("Environment ENTITY_SECRET does not match the managed config copy.")
 
     return {
         "ready": bool(resolved_api_key and active_secret and CIRCLE_SDK_AVAILABLE),

@@ -50,7 +50,7 @@ from omniclaw.protocols.nanopayments.exceptions import (
 from omniclaw.protocols.nanopayments.keys import NanoKeyStore
 from omniclaw.protocols.nanopayments.middleware import (
     GatewayMiddleware,
-    PaymentRequiredHTTPException,
+    PaymentRequiredHTTPError,
     parse_price,
 )
 from omniclaw.protocols.nanopayments.signing import EIP3009Signer, generate_eoa_keypair
@@ -940,13 +940,13 @@ class TestGatewayMiddlewareIntegration:
 
     @pytest.mark.asyncio
     async def test_middleware_handle_without_signature_raises_402(self, mock_client: MagicMock):
-        """handle() without payment signature raises PaymentRequiredHTTPException."""
+        """handle() without payment signature raises PaymentRequiredHTTPError."""
         mw = GatewayMiddleware(
             seller_address="0x" + "f" * 40,
             nanopayment_client=mock_client,
         )
 
-        with pytest.raises(PaymentRequiredHTTPException) as exc_info:
+        with pytest.raises(PaymentRequiredHTTPError) as exc_info:
             await mw.handle(request_headers={}, price_usd="$0.01")
 
         assert exc_info.value.status_code == 402
@@ -3921,7 +3921,7 @@ class TestFastAPIIntegrationSellerDecorator:
 
     @pytest.mark.asyncio
     async def test_gateway_handle_returns_402_without_payment(self, mock_nano_client):
-        """gateway.handle() returns 402 PaymentRequiredHTTPException with no header."""
+        """gateway.handle() returns 402 PaymentRequiredHTTPError with no header."""
         from omniclaw.protocols.nanopayments.middleware import GatewayMiddleware
 
         gw = GatewayMiddleware(
@@ -3931,7 +3931,7 @@ class TestFastAPIIntegrationSellerDecorator:
             auto_fetch_networks=False,
         )
 
-        with pytest.raises(PaymentRequiredHTTPException) as exc_info:
+        with pytest.raises(PaymentRequiredHTTPError) as exc_info:
             await gw.handle({}, self.PRICE_USD)
 
         assert exc_info.value.status_code == 402
@@ -3981,7 +3981,7 @@ class TestFastAPIIntegrationSellerDecorator:
         from starlette.requests import Request
         from omniclaw.protocols.nanopayments.middleware import (
             GatewayMiddleware,
-            PaymentRequiredHTTPException,
+            PaymentRequiredHTTPError,
         )
 
         gw = GatewayMiddleware(
@@ -3995,7 +3995,7 @@ class TestFastAPIIntegrationSellerDecorator:
             try:
                 info = await gw.handle(request_headers, price_usd)
                 return {"status": 200, "content": "premium data", "payer": info.payer}
-            except PaymentRequiredHTTPException as exc:
+            except PaymentRequiredHTTPError as exc:
                 return {"status": exc.status_code, "body": exc.detail}
 
         result = await premium_handler({}, self.PRICE_USD)
@@ -4007,7 +4007,7 @@ class TestFastAPIIntegrationSellerDecorator:
         """FastAPI route with gateway.handle() serves content when valid payment is provided."""
         from omniclaw.protocols.nanopayments.middleware import (
             GatewayMiddleware,
-            PaymentRequiredHTTPException,
+            PaymentRequiredHTTPError,
         )
 
         gw = GatewayMiddleware(
@@ -4021,7 +4021,7 @@ class TestFastAPIIntegrationSellerDecorator:
             try:
                 info = await gw.handle(request_headers, price_usd)
                 return {"status": 200, "content": "premium data", "payer": info.payer}
-            except PaymentRequiredHTTPException as exc:
+            except PaymentRequiredHTTPError as exc:
                 return {"status": exc.status_code, "body": exc.detail}
 
         payment_header = self._build_payment_payload()
@@ -4043,7 +4043,7 @@ class TestFastAPIIntegrationSellerDecorator:
         """
         from omniclaw.protocols.nanopayments.middleware import (
             GatewayMiddleware,
-            PaymentRequiredHTTPException,
+            PaymentRequiredHTTPError,
         )
 
         gw = GatewayMiddleware(
@@ -4055,7 +4055,7 @@ class TestFastAPIIntegrationSellerDecorator:
 
         payment_header = self._build_payment_payload()
 
-        with pytest.raises(PaymentRequiredHTTPException):
+        with pytest.raises(PaymentRequiredHTTPError):
             await gw.handle({}, self.PRICE_USD)
 
         result = await gw.handle({"payment-signature": payment_header}, self.PRICE_USD)
@@ -4079,7 +4079,7 @@ class TestFastAPIIntegrationSellerDecorator:
         """
         from omniclaw.protocols.nanopayments.middleware import (
             GatewayMiddleware,
-            PaymentRequiredHTTPException,
+            PaymentRequiredHTTPError,
         )
 
         gw = GatewayMiddleware(
@@ -4144,7 +4144,7 @@ class TestFastAPIIntegrationSellerDecorator:
             auto_fetch_networks=False,
         )
 
-        with pytest.raises(PaymentRequiredHTTPException) as exc_info:
+        with pytest.raises(PaymentRequiredHTTPError) as exc_info:
             await gw.handle({"payment-signature": "not-valid-base64!!!"}, self.PRICE_USD)
 
         assert exc_info.value.status_code == 402
@@ -4175,7 +4175,7 @@ class TestFastAPIIntegrationSellerDecorator:
 
         payment_header = self._build_payment_payload()
 
-        with pytest.raises(PaymentRequiredHTTPException) as exc_info:
+        with pytest.raises(PaymentRequiredHTTPError) as exc_info:
             await gw.handle({"payment-signature": payment_header}, self.PRICE_USD)
 
 
