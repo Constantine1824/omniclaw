@@ -110,15 +110,14 @@ from omniclaw.protocols.nanopayments.vault import NanoKeyVault
 
 from omniclaw.protocols.nanopayments.wallet import GatewayWalletManager
 
-from omniclaw.protocols.nanopayments.adapter import NanopaymentAdapter
-
 from omniclaw.protocols.nanopayments.middleware import (
     GatewayMiddleware,
-    PaymentRequiredHTTPException,
+    PaymentRequiredHTTPError,
     parse_price,
 )
 
 from omniclaw.protocols.nanopayments.adapter import (
+    NanopaymentAdapter,
     NanopaymentProtocolAdapter,
 )
 
@@ -173,7 +172,7 @@ __all__ = [
     "NanopaymentAdapter",
     # Middleware
     "GatewayMiddleware",
-    "PaymentRequiredHTTPException",
+    "PaymentRequiredHTTPError",
     "parse_price",
     # Adapter wrapper
     "NanopaymentProtocolAdapter",

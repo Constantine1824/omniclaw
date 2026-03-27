@@ -392,6 +392,190 @@ Behavior:
 - `check_trust=True`: require trust evaluation and reject if no RPC is configured
 - `check_trust=False`: skip trust evaluation
 
+## Supported Facilitators
+
+OmniClaw supports multiple x402 facilitators for payment verification and settlement. Choose the facilitator that best fits your needs.
+
+### Facilitator Overview
+
+| Facilitator | Testnet API | Mainnet API | Requires Wallet | API Key |
+|-------------|--------------|-------------|-----------------|---------|
+| **Circle Gateway** | gateway-api-testnet.circle.com | gateway-api.circle.com | Yes (for batch) | Circle API Key |
+| **Coinbase CDP** | api.cdp.coinbase.com/platform | api.cdp.coinbase.com/platform | No | Coinbase API Key |
+| **OrderN** | api.testnet.ordern.ai | api.ordern.ai | No | OrderN API Key |
+| **RBX** | api.testnet.rbx.io | api.rbx.io | No | RBX API Key |
+| **Thirdweb** | gateway.thirdweb-test.com | gateway.thirdweb.com | No | Thirdweb API Key |
+
+### Circle Gateway
+
+Circle's native facilitator with batched nanopayments (EIP-3009).
+
+```python
+from omniclaw import OmniClaw, Network
+
+client = OmniClaw(network=Network.ARC_TESTNET)
+
+# Seller with Circle Gateway
+seller = client.sell(
+    "$0.01",
+    facilitator="circle"  # Uses Circle Gateway
+)
+
+# Buyer paying to Circle Gateway seller
+result = await client.pay(
+    wallet_id=wallet.id,
+    recipient="0xSellerAddress",
+    amount="0.01",
+)
+```
+
+**Requirements:**
+- Circle API key (for settlement)
+- Gateway wallet for nanopayments (EIP-3009 batched transfers)
+
+### Coinbase CDP
+
+Coinbase's x402 facilitator - no wallet required for sellers.
+
+```python
+from omniclaw import create_seller, create_facilitator
+
+# Create Coinbase facilitator
+facilitator = create_facilitator(
+    provider="coinbase",
+    api_key="your_coinbase_api_key",
+    environment="testnet"
+)
+
+# Seller uses facilitator (no wallet needed!)
+seller = create_seller(
+    seller_address="0xYourEVMAddress",
+    name="My API",
+    facilitator=facilitator
+)
+```
+
+**Requirements:**
+- Coinbase CDP API key
+- Any EVM address to receive payments
+- Network: Base (testnet/mainnet)
+
+**Get API Key:** https://portal.cdp.coinbase.com/
+
+### OrderN
+
+OrderN's x402 facilitator - no wallet required.
+
+```python
+facilitator = create_facilitator(
+    provider="ordern",
+    api_key="your_ordern_api_key",
+    environment="testnet"
+)
+
+seller = create_seller(
+    seller_address="0xYourEVMAddress",
+    name="My Service",
+    facilitator=facilitator
+)
+```
+
+**Requirements:**
+- OrderN API key
+- Any EVM address to receive payments
+
+**Get API Key:** https://ordern.ai
+
+### RBX
+
+RBX's x402 facilitator - no wallet required.
+
+```python
+facilitator = create_facilitator(
+    provider="rbx",
+    api_key="your_rbx_api_key",
+    environment="testnet"
+)
+
+seller = create_seller(
+    seller_address="0xYourEVMAddress",
+    name="My Service",
+    facilitator=facilitator
+)
+```
+
+**Requirements:**
+- RBX API key
+- Any EVM address to receive payments
+
+**Get API Key:** https://rbx.io
+
+### Thirdweb
+
+Thirdweb's x402 facilitator - no wallet required.
+
+```python
+facilitator = create_facilitator(
+    provider="thirdweb",
+    api_key="your_thirdweb_api_key",
+    environment="testnet"
+)
+
+seller = create_seller(
+    seller_address="0xYourEVMAddress",
+    name="My Service",
+    facilitator=facilitator
+)
+```
+
+**Requirements:**
+- Thirdweb API key
+- Any EVM address to receive payments
+
+**Get API Key:** https://thirdweb.com/dashboard
+
+### Quick Reference: Creating a Seller
+
+```python
+# Option 1: Using client.sell() with facilitator parameter
+client = OmniClaw(network=Network.ARC_TESTNET)
+result = client.sell("$0.01", facilitator="coinbase")
+
+# Option 2: Using create_seller with facilitator
+from omniclaw.seller import create_seller, create_facilitator
+
+facilitator = create_facilitator("coinbase", api_key="...")
+seller = create_seller(
+    seller_address="0xYourAddress",
+    name="Your API",
+    facilitator=facilitator
+)
+
+# Option 3: Circle Gateway (requires wallet)
+facilitator = create_facilitator("circle", api_key="...")
+seller = create_seller(
+    seller_address="0xYourAddress",
+    name="Your API",
+    facilitator=facilitator
+)
+```
+
+### Environment Variables for Facilitators
+
+```env
+# Circle (primary)
+CIRCLE_API_KEY=your_circle_key
+
+# Generic facilitator (used if provider-specific not set)
+FACILITATOR_API_KEY=your_facilitator_key
+
+# Provider-specific overrides
+COINBASE_API_KEY=your_coinbase_key
+ORDERN_API_KEY=your_ordern_key
+RBX_API_KEY=your_rbx_key
+THIRDWEB_API_KEY=your_thirdweb_key
+```
+
 ## Documentation
 
 Start here:

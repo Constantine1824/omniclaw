@@ -23,6 +23,7 @@ Usage:
     seller.serve(port=4023)
 """
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -30,7 +31,6 @@ import logging
 import os
 import re
 import time
-import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -56,7 +56,7 @@ def _parse_price_to_decimal(price: str) -> Decimal:
     try:
         val = Decimal(cleaned)
     except InvalidOperation:
-        raise ValueError(f"Invalid price: {price!r}")
+        raise ValueError(f"Invalid price: {price!r}") from None
     if val <= 0:
         raise ValueError(f"Price must be positive: {price!r}")
     return val
@@ -64,7 +64,7 @@ def _parse_price_to_decimal(price: str) -> Decimal:
 
 def _usd_to_atomic(price_usd: Decimal) -> int:
     """Convert USD Decimal to USDC atomic units (6 decimals)."""
-    atomic = price_usd * Decimal(10 ** USDC_DECIMAL_PLACES)
+    atomic = price_usd * Decimal(10**USDC_DECIMAL_PLACES)
     if atomic != int(atomic):
         raise ValueError(f"Price has too many decimals: {price_usd}")
     return int(atomic)
@@ -248,7 +248,9 @@ class Seller:
                     raise RuntimeError(
                         "Distributed nonce protection required but Redis client init failed"
                     ) from exc
-                logger.warning("Redis nonce backend unavailable, falling back to local memory: %s", exc)
+                logger.warning(
+                    "Redis nonce backend unavailable, falling back to local memory: %s", exc
+                )
         elif self._require_distributed_nonce:
             raise RuntimeError(
                 "OMNICLAW_SELLER_REQUIRE_DISTRIBUTED_NONCE=true but "
@@ -322,12 +324,15 @@ class Seller:
         if schemes is None:
             schemes = [PaymentScheme.EXACT, PaymentScheme.GATEWAY_BATCHED]
 
-        if self._strict_gateway_contract and PaymentScheme.GATEWAY_BATCHED in schemes:
-            if not self._gateway_contract:
-                raise ValueError(
-                    "GatewayWalletBatched configured but CIRCLE_GATEWAY_CONTRACT is not set. "
-                    "Set CIRCLE_GATEWAY_CONTRACT or disable GatewayWalletBatched for this endpoint."
-                )
+        if (
+            self._strict_gateway_contract
+            and PaymentScheme.GATEWAY_BATCHED in schemes
+            and not self._gateway_contract
+        ):
+            raise ValueError(
+                "GatewayWalletBatched configured but CIRCLE_GATEWAY_CONTRACT is not set. "
+                "Set CIRCLE_GATEWAY_CONTRACT or disable GatewayWalletBatched for this endpoint."
+            )
 
         self._endpoints[path] = Endpoint(
             path=path,
@@ -391,7 +396,9 @@ class Seller:
     ) -> bool:
         """Atomically mark nonce usage; returns False when nonce is already used."""
         now = int(time.time())
-        ttl = max((valid_before - now) + self._nonce_ttl_floor_seconds, self._nonce_ttl_floor_seconds)
+        ttl = max(
+            (valid_before - now) + self._nonce_ttl_floor_seconds, self._nonce_ttl_floor_seconds
+        )
         replay_scope = (
             str(network).lower(),
             str(verifying_contract).lower(),
@@ -559,7 +566,7 @@ class Seller:
             nonce = str(authorization.get("nonce", ""))
             network = str(accepted.get("network", self.config.network))
             pay_to = str(accepted.get("payTo", self.config.seller_address))
-            verifying_contract = str(((accepted.get("extra") or {}).get("verifyingContract", "")))
+            verifying_contract = str((accepted.get("extra") or {}).get("verifyingContract", ""))
             if nonce:
                 nonce_marked, nonce_error = self._check_and_mark_nonce_sync(
                     network=network,
@@ -665,7 +672,7 @@ class Seller:
                 valid_before = int(authorization.get("validBefore", 0))
                 network = str(accepted.get("network", self.config.network))
                 pay_to = str(accepted.get("payTo", self.config.seller_address))
-                verifying_contract = str(((accepted.get("extra") or {}).get("verifyingContract", "")))
+                verifying_contract = str((accepted.get("extra") or {}).get("verifyingContract", ""))
                 if nonce:
                     nonce_marked = await self._check_and_mark_nonce(
                         network=network,
@@ -738,7 +745,7 @@ class Seller:
             valid_before = int(authorization.get("validBefore", 0))
             network = str(accepted.get("network", self.config.network))
             pay_to = str(accepted.get("payTo", self.config.seller_address))
-            verifying_contract = str(((accepted.get("extra") or {}).get("verifyingContract", "")))
+            verifying_contract = str((accepted.get("extra") or {}).get("verifyingContract", ""))
             nonce_marked = await self._check_and_mark_nonce(
                 network=network,
                 payer=buyer_address,
@@ -875,7 +882,6 @@ class Seller:
         payer = str(authorization.get("from", "")).lower()
         payee = str(authorization.get("to", "")).lower()
         nonce = str(authorization.get("nonce", ""))
-        network = str(accepted.get("network", self.config.network))
 
         if not _EVM_ADDRESS_RE.match(payer):
             return False, "Invalid payer address"
@@ -912,7 +918,9 @@ class Seller:
 
         return True, ""
 
-    def _select_accepted_for_payload(self, payload: dict[str, Any], path: str) -> dict[str, Any] | None:
+    def _select_accepted_for_payload(
+        self, payload: dict[str, Any], path: str
+    ) -> dict[str, Any] | None:
         """Pick server-defined accepted requirement matching incoming payload fields."""
         endpoint = self._endpoints.get(path)
         if not endpoint:
@@ -1001,12 +1009,12 @@ class Seller:
 
             buyer_address = result.payer or ""
 
-        authorization = ((payment_payload.get("payload") or {}).get("authorization") or {})
+        authorization = (payment_payload.get("payload") or {}).get("authorization") or {}
         nonce = str(authorization.get("nonce", ""))
         valid_before = int(authorization.get("validBefore", 0))
         network = str(accepted.get("network", self.config.network))
         pay_to = str(accepted.get("payTo", self.config.seller_address))
-        verifying_contract = str(((accepted.get("extra") or {}).get("verifyingContract", "")))
+        verifying_contract = str((accepted.get("extra") or {}).get("verifyingContract", ""))
         if nonce:
             nonce_marked, nonce_error = self._check_and_mark_nonce_sync(
                 network=network,
@@ -1204,7 +1212,9 @@ class Seller:
                             payer=payer,
                             error_reason="no_matching_payment_requirement",
                         )
-                        body = json.dumps({"error": "No server-accepted payment kind matched payload"})
+                        body = json.dumps(
+                            {"error": "No server-accepted payment kind matched payload"}
+                        )
                         return JSONResponse(
                             status_code=402,
                             content=json.loads(body),

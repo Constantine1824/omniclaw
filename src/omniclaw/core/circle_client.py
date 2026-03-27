@@ -152,7 +152,9 @@ class CircleClient:
                     "walletSetId": wallet_set_id,
                     "blockchains": [blockchain_str],
                     "count": count,
-                    "accountType": account_type.value if hasattr(account_type, "value") else str(account_type),
+                    "accountType": account_type.value
+                    if hasattr(account_type, "value")
+                    else str(account_type),
                     "idempotencyKey": idempotency_key,
                     "entitySecretCiphertext": ciphertext,
                 }
@@ -271,6 +273,12 @@ class CircleClient:
             # Generate idempotency key if not provided
             if not idempotency_key:
                 idempotency_key = str(uuid.uuid4())
+            else:
+                # Circle API requires UUID format - convert if needed
+                try:
+                    uuid.UUID(idempotency_key)
+                except ValueError:
+                    idempotency_key = str(uuid.uuid5(uuid.NAMESPACE_OID, idempotency_key))
 
             ciphertext = self._get_ciphertext()
 
@@ -382,21 +390,24 @@ class CircleClient:
         try:
             if not idempotency_key:
                 idempotency_key = str(uuid.uuid4())
+            else:
+                try:
+                    uuid.UUID(idempotency_key)
+                except ValueError:
+                    idempotency_key = str(uuid.uuid5(uuid.NAMESPACE_OID, idempotency_key))
 
             ciphertext = self._get_ciphertext()
 
-            request = (
-                developer_controlled_wallets.CreateContractExecutionTransactionForDeveloperRequest.from_dict(
-                    {
-                        "idempotencyKey": idempotency_key,
-                        "entitySecretCiphertext": ciphertext,
-                        "walletId": wallet_id,
-                        "contractAddress": contract_address,
-                        "abiFunctionSignature": abi_function_signature,
-                        "abiParameters": abi_parameters,
-                        "feeLevel": fee_level.value,
-                    }
-                )
+            request = developer_controlled_wallets.CreateContractExecutionTransactionForDeveloperRequest.from_dict(
+                {
+                    "idempotencyKey": idempotency_key,
+                    "entitySecretCiphertext": ciphertext,
+                    "walletId": wallet_id,
+                    "contractAddress": contract_address,
+                    "abiFunctionSignature": abi_function_signature,
+                    "abiParameters": abi_parameters,
+                    "feeLevel": fee_level.value,
+                }
             )
             response = self._transactions_api.create_developer_transaction_contract_execution(
                 request
@@ -415,4 +426,3 @@ class CircleClient:
                     "function": abi_function_signature,
                 },
             ) from e
-

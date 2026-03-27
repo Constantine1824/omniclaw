@@ -43,6 +43,7 @@ from omniclaw.protocols.nanopayments.exceptions import (
     InsufficientBalanceError,
     NonceReusedError,
     SettlementError,
+    UnsupportedNetworkError,
     UnsupportedSchemeError,
 )
 from omniclaw.protocols.nanopayments.types import (
@@ -66,9 +67,7 @@ def _decimal_to_atomic(amount_decimal: str) -> int:
     amount = Decimal(amount_decimal)
     scaled = amount * Decimal(1_000_000)
     if scaled != scaled.to_integral_value():
-        raise ValueError(
-            f"USDC amount has more than 6 decimal places: {amount_decimal}"
-        )
+        raise ValueError(f"USDC amount has more than 6 decimal places: {amount_decimal}")
     return int(scaled)
 
 
@@ -123,13 +122,11 @@ class NanopaymentCircuitBreaker:
     @property
     def state(self) -> str:
         """Current circuit state: 'closed', 'open', or 'half_open'."""
-        if self._state == "open":
-            # Check if recovery period has passed
-            if self._last_failure_time is not None:
-                elapsed = time.monotonic() - self._last_failure_time
-                # Small epsilon avoids flakiness at exact float boundaries.
-                if elapsed + 1e-9 >= self._recovery_seconds:
-                    self._state = "half_open"
+        if self._state == "open" and self._last_failure_time is not None:
+            elapsed = time.monotonic() - self._last_failure_time
+            # Small epsilon avoids flakiness at exact float boundaries.
+            if elapsed + 1e-9 >= self._recovery_seconds:
+                self._state = "half_open"
         return self._state
 
     def is_available(self) -> bool:
@@ -506,8 +503,10 @@ class NanopaymentAdapter:
         settlement_succeeded = settle_resp is not None and settle_resp.success
         # If content was delivered, we treat the user request as successful even when
         # settlement is delayed/degraded. Reconciliation can retry settlement later.
-        final_success = settlement_succeeded if self._strict_settlement else (
-            settlement_succeeded or content_delivered
+        final_success = (
+            settlement_succeeded
+            if self._strict_settlement
+            else (settlement_succeeded or content_delivered)
         )
 
         # Step 11: Return result
@@ -965,7 +964,11 @@ class NanopaymentProtocolAdapter:
                     else (
                         PaymentStatus.COMPLETED
                         if result.success
-                        else (PaymentStatus.FAILED_FINAL if strict_settlement else PaymentStatus.FAILED)
+                        else (
+                            PaymentStatus.FAILED_FINAL
+                            if strict_settlement
+                            else PaymentStatus.FAILED
+                        )
                     )
                 ),
                 error=None if result.success else "Nanopayment settlement failed",
@@ -979,9 +982,9 @@ class NanopaymentProtocolAdapter:
                 },
             )
 
-        except (UnsupportedSchemeError, CircuitOpenError) as exc:
-            # Safe fallback: seller does not support GatewayWalletBatched
-            # or circuit is open before attempting settlement.
+        except (UnsupportedSchemeError, CircuitOpenError, UnsupportedNetworkError) as exc:
+            # Safe fallback: seller does not support GatewayWalletBatched,
+            # circuit is open, or network is not supported for nanopayments.
             return PaymentResult(
                 success=False,
                 transaction_id=None,

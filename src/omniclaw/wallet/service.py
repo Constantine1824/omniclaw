@@ -224,13 +224,8 @@ class WalletService:
         target_name = f"agent-{agent_name}"
 
         # Check if wallet set exists
-        # Note: Optimization would be to cache this or use a find method
-        # But list_wallet_sets is typically fast enough for setup
-        existing_sets = self.list_wallet_sets()
-        wallet_set = next((s for s in existing_sets if s.name == target_name), None)
-
-        if not wallet_set:
-            wallet_set = self.create_wallet_set(name=target_name)
+        # Note: Circle API no longer returns wallet set names, so we always create a new set.
+        wallet_set = self.create_wallet_set(name=target_name)
 
         # Create wallet(s)
         if count == 1:
@@ -241,8 +236,6 @@ class WalletService:
                 wallet_set_id=wallet_set.id, count=count, blockchain=blockchain
             )
             return wallet_set, wallets
-
-
 
     def get_wallet(self, wallet_id: str) -> WalletInfo:
         """
@@ -544,13 +537,7 @@ class WalletService:
         Returns:
             Wallet set info
         """
-        # Try to find existing
-        wallet_sets = self.list_wallet_sets()
-        for ws in wallet_sets:
-            if ws.name == name:
-                return ws
-
-        # Create new
+        # Circle API no longer returns wallet set names, so we always create a new set.
         return self.create_wallet_set(name)
 
     def setup_agent_wallet(
@@ -577,8 +564,6 @@ class WalletService:
         )
 
         return wallet_set, wallet
-
-
 
     def clear_cache(self) -> None:
         """Clear the wallet cache."""

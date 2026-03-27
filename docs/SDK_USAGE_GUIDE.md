@@ -25,6 +25,9 @@ OMNICLAW_STORAGE_BACKEND=redis
 OMNICLAW_REDIS_URL=redis://localhost:6379
 OMNICLAW_LOG_LEVEL=DEBUG
 OMNICLAW_RPC_URL=https://your-rpc-provider
+
+# Nanopayment network (default: Base Sepolia for testnet)
+OMNICLAW_NANOPAYMENTS_DEFAULT_NETWORK=eip155:84532  # Base Sepolia
 ```
 
 ### Entity Secret Recovery
@@ -48,6 +51,44 @@ Run the built-in diagnostic command to check the full state:
 
 ```bash
 omniclaw doctor
+```
+
+## Testing with Real Funds
+
+To test payments with real USDC on testnet:
+
+**1. Configure for Base Sepolia:**
+
+```env
+OMNICLAW_NANOPAYMENTS_DEFAULT_NETWORK=eip155:84532  # Base Sepolia
+OMNICLAW_RPC_URL=https://sepolia.base.org
+```
+
+**2. Get testnet tokens:**
+
+- **ETH (for gas):** https://faucets.chain.link/base-sepolia
+- **USDC (for payments):** https://faucet.circle.com/ → Select Base Sepolia → Send 20 USDC
+
+**3. Get payment addresses:**
+
+```python
+wallet_set, wallet = await client.create_agent_wallet("my-agent")
+
+# Circle wallet (for transfers)
+circle_address = wallet.address
+
+# Nano/Gateway (for nanopayments - EIP-3009)
+nano_address = await client._nano_vault.get_address(alias=f"wallet-{wallet.id}")
+```
+
+**4. Test a payment:**
+
+```python
+result = await client.pay(
+    wallet_id=wallet.id,
+    recipient="0xRecipientAddress",
+    amount="0.01",  # 1 cent USDC
+)
 ```
 
 ## 2. Create a Wallet
@@ -74,6 +115,14 @@ Common wallet operations:
 wallets = await client.list_wallets(wallet_set_id=wallet_set.id)
 wallet_info = await client.get_wallet(wallet.id)
 balance = await client.get_balance(wallet.id)
+
+# Get payment address (where to fund with USDC)
+payment_address = await client.get_payment_address(wallet.id)
+
+# Get detailed balance (available + reserved for intents)
+detailed = await client.get_detailed_balance(wallet.id)
+print(f"Available: {detailed['available']}, Reserved: {detailed['reserved']}")
+
 transactions = await client.list_transactions(wallet_id=wallet.id)
 ```
 
@@ -197,20 +246,113 @@ Use intents when you need:
 
 ## 8. Receive Nanopayments as a Seller
 
-Nanopayments use EIP-3009 for gas-free USDC transfers. As a seller, you protect FastAPI endpoints so buyers pay before receiving content.
+Nanopayments use EIP-3009 for gas-free USDC transfers via Circle Gateway batch settlement. As a seller, you protect FastAPI endpoints so buyers pay before receiving content.
 
-### Setup: Create a Nanopayment Key
+### Quick Start (6 lines!)
 
 ```python
-# Generate a new EOA key for receiving payments
-await client.add_key(alias="my-nano-key", private_key="0x...")
+from fastapi import FastAPI, Depends
+from omniclaw import OmniClaw
 
-# Or use create_agent which sets up nanopayments automatically
-agent = await client.create_agent(
-    name="data-agent",
-    nano_key_alias="data-agent-nano",
+app = FastAPI()
+client = OmniClaw()
+
+# Create seller account - ONE CALL does everything
+wallet_set, wallet = await client.create_agent_wallet("my-saas-product")
+
+# Protect your endpoint - that's it!
+@app.get("/premium-data")
+async def get_premium(payment=Depends(client.sell("$0.01"))):
+    return {
+        "data": "premium content",
+        "paid_by": payment.payer,
+    }
+```
+
+### How It Works
+
+1. **Circle Gateway batch settlement** - All nanopayments are automatically batched and settled via EIP-3009
+2. **Gasless for buyers** - Buyers don't pay gas fees
+3. **Seller receives USDC in Gateway** - Instant settlement to your Gateway wallet
+
+### Get Payment Address
+
+```python
+# Get address for buyers to pay to
+payment_address = await client.get_payment_address(wallet.id)
+```
+
+### Check Earnings
+
+```python
+# Check your Gateway balance (USDC received from buyers)
+balance = await client.get_gateway_balance(wallet.id)
+print(f"Total: {balance.formatted_total}")
+print(f"Available: {balance.formatted_available}")
+```
+
+### Withdraw Earnings
+
+```python
+# Withdraw to your Circle wallet
+await client.withdraw_from_gateway(
+    wallet_id=wallet.id,
+    amount_usdc="50.00",
 )
-# agent.nano_address is your payment address (e.g. "0x742d...")
+
+# Or withdraw to another chain (cross-chain via CCTP)
+await client.withdraw_from_gateway(
+    wallet_id=wallet.id,
+    amount_usdc="25.00",
+    destination_chain="eip155:1",  # Ethereum mainnet
+    recipient="0xYourEthAddress",
+)
+```
+
+### Why OmniClaw vs Raw x402?
+
+**OmniClaw (SIMPLE - 3 lines):**
+```python
+wallet_set, wallet = await client.create_agent_wallet("my-product")
+
+@app.get("/data")
+async def handler(payment=Depends(client.sell("$0.01"))):
+    return {"data": "..."}
+```
+
+**Raw x402 (40+ lines):**
+```python
+server = x402ResourceServer(HTTPFacilitatorClient(FacilitatorConfig(url=...)))
+server.register("eip155:84532", ExactEvmServerScheme())
+
+routes = {
+    "GET /data": RouteConfig(
+        accepts=[PaymentOption(scheme="exact", price="$0.01", network="eip155:84532", pay_to=address)]
+    ),
+}
+app.add_middleware(PaymentMiddlewareASGI, routes=routes, server=server)
+
+@app.get("/data")
+async def handler():
+    return {"data": "..."}
+```
+
+**OmniClaw handles all the complexity** - facilitator, settlement, networks - you just write business logic!
+
+### Advanced: Custom Routes (like x402)
+
+If you need more control like x402:
+
+```python
+# Coming soon - define custom routes with multiple payment options
+routes = {
+    "GET /premium": RouteConfig(
+        accepts=[
+            PaymentOption(scheme="exact", price="$0.01", network="eip155:84532", pay_to=address),
+            PaymentOption(scheme="exact", price="$0.01", network="eip155:1", pay_to=address),
+        ]
+    ),
+}
 ```
 
 ### Deposit USDC to Enable Receiving
@@ -218,15 +360,20 @@ agent = await client.create_agent(
 Your gateway wallet needs a USDC balance to receive payments (it acts as a vault — buyers pay you by sending from their gateway to yours).
 
 ```python
-# Check your gateway balance
-balance = await client.get_gateway_balance(nano_key_alias="my-nano-key")
+# Check your gateway balance (uses wallet_id)
+balance = await client.get_gateway_balance(wallet.id)
 print(f"Gateway balance: {balance.formatted_total}")
 
-# Deposit from your Circle wallet
+# Deposit from your Circle wallet to Gateway (for gasless nanopayments)
 await client.deposit_to_gateway(
-    nano_key_alias="my-nano-key",
+    wallet_id=wallet.id,
     amount_usdc="100.00",
-    source_wallet_id=wallet.id,
+)
+
+# Withdraw from Gateway back to your wallet
+await client.withdraw_from_gateway(
+    wallet_id=wallet.id,
+    amount_usdc="50.00",
 )
 ```
 

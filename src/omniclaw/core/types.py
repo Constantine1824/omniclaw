@@ -74,6 +74,39 @@ class Network(str, Enum):
 
     @classmethod
     def from_string(cls, value: str) -> "Network":
+        # Support CAIP-2 format (eip155:80002, etc.)
+        if ":" in value:
+            caip2_map = {
+                "eip155:1": cls.ETH,
+                "eip155:11155111": cls.ETH_SEPOLIA,
+                "eip155:43114": cls.AVAX,
+                "eip155:43113": cls.AVAX_FUJI,
+                "eip155:137": cls.MATIC,
+                "eip155:80002": cls.MATIC_AMOY,
+                "eip155:42161": cls.ARB,
+                "eip155:421614": cls.ARB_SEPOLIA,
+                "eip155:8453": cls.BASE,
+                "eip155:84532": cls.BASE_SEPOLIA,
+                "eip155:10": cls.OP,
+                "eip155:11155420": cls.OP_SEPOLIA,
+                "eip155:130": cls.UNI,
+                "eip155:1301": cls.UNI_SEPOLIA,
+                "eip155:5042002": cls.ARC_TESTNET,
+                "solana:mainnet": cls.SOL,
+                "solana:devnet": cls.SOL_DEVNET,
+                "near:mainnet": cls.NEAR,
+                "near:testnet": cls.NEAR_TESTNET,
+                "aptos:mainnet": cls.APTOS,
+                "aptos:testnet": cls.APTOS_TESTNET,
+            }
+            normalized = value.lower().strip()
+            if normalized in caip2_map:
+                return caip2_map[normalized]
+            # Unknown CAIP-2 network - fall back to testnet/mainnet by convention
+            if any(t in normalized for t in ("testnet", "sepolia", "fuji", "devnet", "amoy")):
+                return cls.EVM_TESTNET
+            return cls.EVM
+
         value_upper = value.upper().replace("_", "-")
         for member in cls:
             if member.value == value_upper:
@@ -261,7 +294,6 @@ class WalletSetInfo:
     """Wallet set information from Circle API."""
 
     id: str
-    name: str | None
     custody_type: CustodyType
     create_date: datetime
     update_date: datetime
@@ -279,7 +311,6 @@ class WalletSetInfo:
 
         return cls(
             id=data["id"],
-            name=data.get("name"),
             custody_type=CustodyType(data["custodyType"]),
             create_date=parse_dt(data.get("createDate")),
             update_date=parse_dt(data.get("updateDate")),
@@ -513,6 +544,21 @@ class BatchPaymentResult:
     failed_count: int
     results: list[PaymentResult]
     transaction_ids: list[str] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        """Alias for total_count for convenience."""
+        return self.total_count
+
+    @property
+    def successful(self) -> int:
+        """Alias for success_count for convenience."""
+        return self.success_count
+
+    @property
+    def failed(self) -> int:
+        """Alias for failed_count for convenience."""
+        return self.failed_count
 
 
 # Token IDs for USDC on different networks (from Circle)

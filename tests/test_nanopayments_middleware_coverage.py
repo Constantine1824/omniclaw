@@ -25,7 +25,7 @@ from omniclaw.protocols.nanopayments.exceptions import (
 )
 from omniclaw.protocols.nanopayments.middleware import (
     GatewayMiddleware,
-    PaymentRequiredHTTPException,
+    PaymentRequiredHTTPError,
     parse_price,
     NoNetworksAvailableError as MiddlewareNoNetworksAvailableError,
 )
@@ -316,7 +316,7 @@ class TestHandleErrorHandling:
 
         sig_header = base64.b64encode(json.dumps(payload.to_dict()).encode()).decode()
 
-        with pytest.raises(PaymentRequiredHTTPException) as exc_info:
+        with pytest.raises(PaymentRequiredHTTPError) as exc_info:
             await middleware.handle(
                 {"payment-signature": sig_header},
                 "$0.001",
@@ -354,7 +354,7 @@ class TestHandleErrorHandling:
 
         sig_header = base64.b64encode(json.dumps(payload.to_dict()).encode()).decode()
 
-        with pytest.raises(PaymentRequiredHTTPException) as exc_info:
+        with pytest.raises(PaymentRequiredHTTPError) as exc_info:
             await middleware.handle(
                 {"payment-signature": sig_header},
                 "$0.001",
@@ -394,7 +394,7 @@ class TestHandleErrorHandling:
 
         sig_header = base64.b64encode(json.dumps(payload.to_dict()).encode()).decode()
 
-        with pytest.raises(PaymentRequiredHTTPException) as exc_info:
+        with pytest.raises(PaymentRequiredHTTPError) as exc_info:
             await middleware.handle(
                 {"payment-signature": sig_header},
                 "$0.001",
@@ -432,7 +432,7 @@ class TestRequire:
         mock_request = MagicMock()
         mock_request.headers = {}  # No payment signature
 
-        # When called, should raise HTTPException (not PaymentRequiredHTTPException)
+        # When called, should raise HTTPException (not PaymentRequiredHTTPError)
         # because the dependency wraps it
         from fastapi import HTTPException
 
@@ -504,7 +504,7 @@ class TestRequire:
 
     @pytest.mark.asyncio
     async def test_require_dependency_wraps_402_to_http_exception(self):
-        """Lines 443-448: Wraps PaymentRequiredHTTPException to HTTPException."""
+        """Lines 443-448: Wraps PaymentRequiredHTTPError to HTTPException."""
         middleware = GatewayMiddleware(
             seller_address="0x" + "a" * 40,
             nanopayment_client=_make_client(_make_kinds()),

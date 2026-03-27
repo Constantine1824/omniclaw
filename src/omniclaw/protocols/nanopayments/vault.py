@@ -549,11 +549,7 @@ class NanoKeyVault:
 
             # Check for network-specific RPC URLs in environment
             env_rpc = os.environ.get(f"RPC_URL_{key_network.replace(':', '_').upper()}")
-            if env_rpc:
-                rpc_url = env_rpc
-            else:
-                # Try generic RPC_URL
-                rpc_url = os.environ.get("RPC_URL")
+            rpc_url = env_rpc or os.environ.get("RPC_URL")
 
             if rpc_url is None:
                 raise ValueError(

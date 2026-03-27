@@ -52,7 +52,6 @@ def sample_wallet_set() -> WalletSetInfo:
 
     return WalletSetInfo(
         id="ws-123",
-        name="Test Wallet Set",
         custody_type=CustodyType.DEVELOPER,
         create_date=datetime.now(),
         update_date=datetime.now(),
@@ -104,7 +103,6 @@ class TestWalletSetOperations:
         result = wallet_service.create_wallet_set("Test Wallet Set")
 
         assert result.id == "ws-123"
-        assert result.name == "Test Wallet Set"
         mock_circle_client.create_wallet_set.assert_called_once_with("Test Wallet Set")
 
     def test_list_wallet_sets(
@@ -483,13 +481,13 @@ class TestUtilityMethods:
         mock_circle_client: MagicMock,
         sample_wallet_set: WalletSetInfo,
     ) -> None:
-        """Test get_or_create finds existing wallet set."""
-        mock_circle_client.list_wallet_sets.return_value = [sample_wallet_set]
+        """Test get_or_create always creates new (Circle API no longer returns names)."""
+        mock_circle_client.create_wallet_set.return_value = sample_wallet_set
 
         result = wallet_service.get_or_create_default_wallet_set("Test Wallet Set")
 
         assert result.id == "ws-123"
-        mock_circle_client.create_wallet_set.assert_not_called()
+        mock_circle_client.create_wallet_set.assert_called_once_with("Test Wallet Set")
 
     def test_get_or_create_default_wallet_set_creates_new(
         self,
