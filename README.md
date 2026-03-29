@@ -98,7 +98,29 @@ from omniclaw import OmniClaw, Network
 client = OmniClaw(network=Network.BASE_SEPOLIA)
 ```
 
-Network is set in code, RPC from `.env`.
+**3. Check setup:**
+
+```bash
+omniclaw doctor   # Verify credentials
+omniclaw env      # List all env vars
+```
+
+## Production Canary
+
+Run a payment canary before and after deploys:
+
+```bash
+python examples/payment_canary.py \
+  --wallet-id <wallet_id> \
+  --recipient <recipient> \
+  --amount 0.10 \
+  --network BASE_SEPOLIA \
+  --sla-seconds 300
+```
+
+Expected:
+- `0` on success within SLA
+- non-zero on failure or SLA breach
 
 ## Environment Variables
 
