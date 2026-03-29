@@ -49,14 +49,18 @@ classifiers = [
 dependencies = [
     "circle-developer-controlled-wallets==9.1.0",
     "pydantic==2.12.0",
-    "httpx==0.28.0",
-    "python-dotenv==1.2.0",
+    "httpx>=0.28.1",
+    "python-dotenv>=1.2.1",
     "cryptography==44.0.0",
     "redis==7.1.0",
     "tenacity==8.2.0",
     # x402 official SDK and signing
-    "x402[httpx]==0.1.0",
+    "x402[httpx]>=2.0.0",
     "eth-account==0.12.0",
+    "web3>=6.0.0",
+    "typer>=0.15.0",
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
 ]
 
 [project.optional-dependencies]
@@ -82,6 +86,7 @@ Issues = "https://github.com/omnuron/omniclaw/issues"
 
 [project.scripts]
 omniclaw = "omniclaw.cli:main"
+omniclaw-cli = "omniclaw.cli_agent:main"
 
 [dependency-groups]
 dev = [
@@ -103,11 +108,12 @@ sources = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-addopts = "-v --tb=short"
+addopts = "-v --tb=short -p no:pytest_ethereum"
 
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+src = ["src"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
@@ -122,3 +128,4 @@ warn_unused_ignores = true
 [tool.ruff.lint.per-file-ignores]
 # nanopayments __init__ needs specific import order to avoid circular imports
 "src/omniclaw/protocols/nanopayments/__init__.py" = ["I001"]
+"src/omniclaw/cli.py" = ["I001"]
