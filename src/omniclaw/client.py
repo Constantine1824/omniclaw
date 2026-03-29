@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import contextvars
 import os
 import re
@@ -405,19 +406,14 @@ class OmniClaw:
 
         # For Circle, we need nanopayments initialized
         if (facilitator is None or facilitator == "circle") and (not self._nano_client or not self._nano_vault):
-            raise NanopaymentNotInitializedError(
-                "Circle Gateway requires nanopayments. "
-                "Either use a different facilitator or initialize with Circle API key."
-            )
+            raise NanopaymentNotInitializedError()
 
         # If no seller_address provided, try to get from wallet
         if not seller_address:
             if self._nano_vault:
                 # Try to get from existing wallet
-                try:
+                with contextlib.suppress(Exception):
                     seller_address = await self._nano_vault.get_address(alias=None)
-                except Exception:
-                    pass
             if not seller_address:
                 raise ValueError(
                     "seller_address is required. "
