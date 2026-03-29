@@ -55,7 +55,7 @@ dependencies = [
     "redis==7.1.0",
     "tenacity==8.2.0",
     # x402 official SDK and signing
-    "x402[httpx]==0.1.0",
+    "x402[httpx]>=2.0.0",
     "eth-account==0.12.0",
 ]
 
