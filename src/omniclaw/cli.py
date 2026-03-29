@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import argparse
-from collections.abc import Sequence
 import os
+from collections.abc import Sequence
 
 from omniclaw.onboarding import print_doctor_status
 
