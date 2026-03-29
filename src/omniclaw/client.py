@@ -411,12 +411,11 @@ class OmniClaw:
                 )
 
         # For Circle, we need nanopayments initialized
-        if facilitator is None or facilitator == "circle":
-            if not self._nano_client or not self._nano_vault:
-                raise NanopaymentNotInitializedError(
-                    "Circle Gateway requires nanopayments. "
-                    "Either use a different facilitator or initialize with Circle API key."
-                )
+        if (facilitator is None or facilitator == "circle") and (not self._nano_client or not self._nano_vault):
+            raise NanopaymentNotInitializedError(
+                "Circle Gateway requires nanopayments. "
+                "Either use a different facilitator or initialize with Circle API key."
+            )
 
         # Create facilitator if not Circle
         facilitator_client = None
@@ -489,10 +488,11 @@ class OmniClaw:
         """
         from fastapi import Depends
 
-        base_dependency_factory = lambda: self.gateway(
-            seller_address=seller_address,
-            facilitator=facilitator,
-        )
+        def base_dependency_factory():
+            return self.gateway(
+                seller_address=seller_address,
+                facilitator=facilitator,
+            )
         price_str = price
 
         async def wrapper() -> PaymentInfo:
