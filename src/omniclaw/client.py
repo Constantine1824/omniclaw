@@ -403,23 +403,26 @@ class OmniClaw:
         if self._gateway_middleware is not None and seller_address is None and facilitator is None:
             return self._gateway_middleware
 
-        # If no seller_address provided, try to get from wallet
-        if not seller_address:
-            if self._nano_vault:
-                # Try to get from existing wallet
-                seller_address = await self._nano_vault.get_address(alias=None)
-            if not seller_address:
-                raise ValueError(
-                    "seller_address is required. "
-                    "Provide your payment address, or create a wallet first."
-                )
-
         # For Circle, we need nanopayments initialized
         if (facilitator is None or facilitator == "circle") and (not self._nano_client or not self._nano_vault):
             raise NanopaymentNotInitializedError(
                 "Circle Gateway requires nanopayments. "
                 "Either use a different facilitator or initialize with Circle API key."
             )
+
+        # If no seller_address provided, try to get from wallet
+        if not seller_address:
+            if self._nano_vault:
+                # Try to get from existing wallet
+                try:
+                    seller_address = await self._nano_vault.get_address(alias=None)
+                except Exception:
+                    pass
+            if not seller_address:
+                raise ValueError(
+                    "seller_address is required. "
+                    "Provide your payment address, or create a wallet first."
+                )
 
         # Create facilitator if not Circle
         facilitator_client = None
