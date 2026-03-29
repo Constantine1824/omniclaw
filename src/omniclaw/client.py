@@ -399,6 +399,10 @@ class OmniClaw:
         Raises:
             NanopaymentNotInitializedError: If nanopayments are disabled and facilitator is Circle.
         """
+        # Return cached middleware if available and no overrides specified
+        if self._gateway_middleware is not None and seller_address is None and facilitator is None:
+            return self._gateway_middleware
+
         # If no seller_address provided, try to get from wallet
         if not seller_address:
             if self._nano_vault:
