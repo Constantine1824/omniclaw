@@ -82,7 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Output machine-readable JSON",
     )
 
-    env_parser = subparsers.add_parser(
+    subparsers.add_parser(
         "env",
         help="List all available environment variables",
     )

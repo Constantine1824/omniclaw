@@ -3765,6 +3765,7 @@ class TestOmniClawSellerDecorator:
         await seller_client.generate_key("seller-key")
         await seller_client.set_default_key("seller-key")
 
+        pytest.importorskip("fastapi")
         depends = seller_client.sell("$0.001")
 
         assert depends is not None
@@ -3791,6 +3792,7 @@ class TestOmniClawSellerDecorator:
 
                 client._nano_client = None
 
+                pytest.importorskip("fastapi")
                 depends = client.sell("$0.001")
                 assert depends is not None
                 assert hasattr(depends, "dependency")
