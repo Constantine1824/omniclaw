@@ -50,7 +50,7 @@ dependencies = [
     "circle-developer-controlled-wallets==9.1.0",
     "pydantic==2.12.0",
     "httpx==0.28.0",
-    "python-dotenv==1.2.0",
+    "python-dotenv>=1.2.1",
     "cryptography==44.0.0",
     "redis==7.1.0",
     "tenacity==8.2.0",
