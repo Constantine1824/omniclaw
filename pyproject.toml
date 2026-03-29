@@ -57,6 +57,7 @@ dependencies = [
     # x402 official SDK and signing
     "x402[httpx]>=2.0.0",
     "eth-account==0.12.0",
+    "web3>=6.0.0",
 ]
 
 [project.optional-dependencies]
