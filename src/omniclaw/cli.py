@@ -16,9 +16,9 @@ from omniclaw.onboarding import print_doctor_status
 BANNER = r"""
    ____  __  __ _   _ ___ ____ _        ___        __
   / __ \|  \/  | \ | |_ _/ ___| |      / \ \      / /
- | |  | | |\/| |  \| || | |   | |     / _ \ \ /\ / / 
- | |__| | |  | | |\  || | |___| |___ / ___ \ V  V /  
-  \____/|_|  |_|_| \_|___\____|_____/_/   \_\_/\_/ 
+ | |  | | |\/| |  \| || | |   | |     / _ \ \ /\ / /
+ | |__| | |  | | |\  || | |___| |___ / ___ \ V  V /
+  \____/|_|  |_|_| \_|___\____|_____/_/   \_\_/\_/
 
   OmniClaw is the economy and control layer for AI agent payments.
   Economic Execution and Control Layer for Agentic Systems
