@@ -91,6 +91,7 @@ omniclaw-cli = "omniclaw.cli_agent:main"
 
 [dependency-groups]
 dev = [
+    "build>=1.4.0",
     "python-dotenv>=1.2.1",
     "uvicorn>=0.42.0",
 ]

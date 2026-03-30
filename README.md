@@ -24,6 +24,30 @@ uv sync --extra dev
 
 ## Quick Start
 
+### For Agents Using the CLI
+
+```bash
+pip install omniclaw
+omniclaw-cli configure --server-url <SERVER_URL> --token <TOKEN> --wallet primary
+```
+
+### For Owners Running the Server
+
+```bash
+# Clone and start
+git clone https://github.com/omniclaw/omniclaw.git
+cd omniclaw
+docker-compose up -d
+
+# Server runs at http://localhost:8088
+```
+
+**Required environment variables:**
+```
+CIRCLE_API_KEY=your_circle_api_key
+ENTITY_SECRET=your_entity_secret
+```
+
 1. Create a `.env` file:
 
 ```

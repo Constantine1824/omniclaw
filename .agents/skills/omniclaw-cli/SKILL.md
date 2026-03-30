@@ -40,7 +40,14 @@ omniclaw-cli ping
 
 ## Configuration (one-time setup)
 
-Before using any payment commands, you must configure the CLI with your server details:
+**IMPORTANT:** Your owner must provide these values before your session starts. Do NOT look for them yourself - ask your owner if they are missing.
+
+Your owner gives you:
+- `--server-url`: OmniClaw server URL (e.g., `https://api.omniclaw.com` or `http://localhost:8080`)
+- `--token`: Your scoped agent token (from your owner)
+- `--wallet`: Your wallet alias (e.g., `primary`)
+
+**Configure the CLI:**
 
 ```bash
 omniclaw-cli configure \
@@ -49,16 +56,13 @@ omniclaw-cli configure \
   --wallet <WALLET_ALIAS>
 ```
 
-**Where to get these values:**
-- `--server-url`: Your OmniClaw server URL (e.g., `https://api.omniclaw.com` or `http://localhost:8080`)
-- `--token`: Your scoped agent token (from your owner)
-- `--wallet`: Your wallet alias (e.g., `primary`)
-
 **Verify configuration:**
 
 ```bash
 omniclaw-cli configure --show
 ```
+
+**If credentials are missing:** Stop and ask your owner. Do not proceed without them.
 
 ---
 
