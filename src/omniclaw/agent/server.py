@@ -51,8 +51,11 @@ def create_app() -> FastAPI:
 
         # Initialize wallet manager
         wallet_mgr = WalletManager(policy_mgr, client)
-        wallet_results = await wallet_mgr.initialize_wallets()
-        logger.info(f"Initialized agent wallet: {wallet_results}")
+        
+        # PRODUCITON RESILIENCE: Run wallet initialization in the background
+        # This prevents Circle API timeouts from blocking the Control Plane startup
+        logger.info("OmniClaw background initialization started (non-blocking)...")
+        asyncio.create_task(wallet_mgr.initialize_wallets())
 
         # Initialize token auth
         auth = TokenAuth(policy_mgr)

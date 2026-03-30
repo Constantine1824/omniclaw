@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 from dataclasses import dataclass, field
@@ -104,7 +105,8 @@ class PolicyManager:
             "OMNICLAW_AGENT_POLICY_PATH", "/config/policy.json"
         )
         self._policy: Policy | None = None
-        self._wallet_id: str | None = None
+        self._token_to_wallet_id: dict[str, str] = {}
+        self._wallet_id_to_config: dict[str, dict[str, Any]] = {}
         self._logger = logger
 
     async def load(self) -> Policy:
@@ -119,65 +121,53 @@ class PolicyManager:
             data = json.load(f)
 
         self._policy = Policy.from_dict(data)
-        self._logger.info("Loaded agent policy configuration.")
+        self._logger.info("Loaded agent economy policy configuration.")
         return self._policy
 
-    def get_policy(self) -> Policy:
-        """Get current policy."""
-        if not self._policy:
-            raise RuntimeError("Policy not loaded")
-        return self._policy
+    def get_token_map(self) -> dict[str, dict[str, Any]]:
+        return self._policy.tokens if self._policy else {}
 
-    def get_wallet_id(self) -> str | None:
-        return self._wallet_id
+    def get_wallet_map(self) -> dict[str, dict[str, Any]]:
+        return self._policy.wallets if self._policy else {}
 
-    def set_wallet_id(self, wallet_id: str) -> None:
-        """Set wallet ID after creation."""
-        self._wallet_id = wallet_id
-        self._logger.info(f"Set primary agent wallet ID to '{wallet_id}'")
+    def set_mapping(self, token: str, wallet_id: str, config: dict[str, Any]) -> None:
+        self._token_to_wallet_id[token] = wallet_id
+        self._wallet_id_to_config[wallet_id] = config
 
-    def is_valid_recipient(self, recipient: str) -> bool:
-        """Check if recipient is allowed for wallet."""
-        if not self._policy:
-            return True  # No policy means allow all
+    def get_wallet_id_for_token(self, token: str) -> str | None:
+        return self._token_to_wallet_id.get(token)
 
-        recipients = self._policy.recipients
-        if not recipients.addresses and not recipients.domains:
-            return True  # No restrictions
+    def is_valid_recipient(self, recipient: str, wallet_id: str) -> bool:
+        """Check if recipient is allowed for a specific wallet."""
+        config = self._wallet_id_to_config.get(wallet_id, {})
+        recipient_cfg = RecipientConfig.from_dict(config.get("recipients"))
+        
+        if not recipient_cfg.addresses and not recipient_cfg.domains:
+            return True
 
-        if recipient in recipients.addresses:
-            return recipients.mode == "whitelist"
+        if recipient in recipient_cfg.addresses:
+            return recipient_cfg.mode == "whitelist"
 
         if recipient.startswith("http"):
-            for domain in recipients.domains:
+            for domain in recipient_cfg.domains:
                 if domain in recipient:
-                    return recipients.mode == "whitelist"
+                    return recipient_cfg.mode == "whitelist"
 
-        return recipients.mode != "whitelist"
+        return recipient_cfg.mode != "whitelist"
 
-    def check_limits(self, amount: Decimal) -> tuple[bool, str | None]:
-        """Check if amount is within limits."""
-        if not self._policy:
-            return True, None
-
-        limits = self._policy.limits
+    def check_limits(self, amount: Decimal, wallet_id: str) -> tuple[bool, str | None]:
+        config = self._wallet_id_to_config.get(wallet_id, {})
+        limits = WalletLimits.from_dict(config.get("limits"))
 
         if limits.per_tx_max and amount > limits.per_tx_max:
             return False, f"Amount {amount} exceeds per_tx_max {limits.per_tx_max}"
 
-        if limits.per_tx_min and amount < limits.per_tx_min:
-            return False, f"Amount {amount} below per_tx_min {limits.per_tx_min}"
-
         return True, None
 
-    def requires_confirmation(self, amount: Decimal) -> bool:
-        """Check if payment requires confirmation."""
-        if not self._policy:
-            return False
-        threshold = self._policy.confirm_threshold
-        if not threshold:
-            return False
-        return amount >= threshold
+    def requires_confirmation(self, amount: Decimal, wallet_id: str) -> bool:
+        config = self._wallet_id_to_config.get(wallet_id, {})
+        threshold = Decimal(config.get("confirm_threshold", "0"))
+        return threshold > 0 and amount >= threshold
 
 
 class WalletManager:
@@ -189,14 +179,26 @@ class WalletManager:
         self._logger = logger
 
     async def initialize_wallets(self) -> dict[str, str]:
-        """Ensure the single agent wallet exists."""
-        try:
-            wallet_id = os.environ.get("OMNICLAW_AGENT_WALLET_ID")
-            if wallet_id:
-                wallet = await self._client.get_wallet(wallet_id)
-            else:
-                wallet_set, wallet = await self._client.create_agent_wallet(
-                    agent_name="omniclaw-primary-agent",
+        """Initialize all wallets defined in the policy mapping (Parallel)."""
+        token_map = self._policy.get_token_map()
+        wallet_map = self._policy.get_wallet_map()
+        results = {}
+
+        # PHASE 1: Pre-populate token map with alias so Auth works immediately (stateless)
+        for token, config in token_map.items():
+            alias = config.get("wallet_alias", "primary")
+            # We don't have the real wallet_id yet, but we map it to a placeholder 
+            # so the Agent isn't rejected with "Unauthorized"
+            self._policy.set_mapping(token, f"pending-{alias}", wallet_map.get(alias, {}))
+
+        # PHASE 2: Perform the intensive SDK/Network calls in PARALLEL
+        async def init_one(token: str, config: dict[str, Any]):
+            alias = config.get("wallet_alias", "primary")
+            wallet_cfg = wallet_map.get(alias, {})
+            try:
+                # 10/10 RESILIENCE: Explicitly handle async/sync transitions to prevent unpacking errors
+                coro = self._client.create_agent_wallet(
+                    agent_name=f"omniclaw-{alias}",
                     apply_default_guards=False,
                 )
 
@@ -207,17 +209,28 @@ class WalletManager:
             self._logger.error(f"Failed to initialize agent wallet: {e}")
             return {"status": "error", "message": str(e)}
 
-    async def get_wallet_address(self) -> str | None:
-        """Get wallet address."""
-        wallet_id = self._policy.get_wallet_id()
-        if not wallet_id:
-            return None
-        wallet = await self._client.get_wallet(wallet_id)
-        return wallet.address if wallet else None
+        # Gather all parallel tasks
+        tasks = [init_one(token, config) for token, config in token_map.items()]
+        batch_results = await asyncio.gather(*tasks)
+        
+        # Collect results
+        for token, wallet_id in batch_results:
+            if wallet_id:
+                results[token] = wallet_id
+        
+        return results
 
-    async def get_wallet_balance(self) -> Decimal | None:
-        """Get wallet balance."""
-        wallet_id = self._policy.get_wallet_id()
-        if not wallet_id:
+    async def get_wallet_address(self, wallet_id: str) -> str | None:
+        """Get wallet address."""
+        try:
+            wallet = await self._client.get_wallet(wallet_id)
+            return wallet.address if wallet else None
+        except Exception:
             return None
-        return await self._client.get_balance(wallet_id)
+
+    async def get_wallet_balance(self, wallet_id: str) -> Decimal | None:
+        """Get wallet balance."""
+        try:
+            return await self._client.get_balance(wallet_id)
+        except Exception:
+            return None
