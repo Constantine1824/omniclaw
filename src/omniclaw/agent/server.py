@@ -6,6 +6,7 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning, module="pkg_resources")
 warnings.filterwarnings("ignore", message=".*pkg_resources is deprecated.*")
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -51,7 +52,7 @@ def create_app() -> FastAPI:
 
         # Initialize wallet manager
         wallet_mgr = WalletManager(policy_mgr, client)
-        
+
         # PRODUCITON RESILIENCE: Run wallet initialization in the background
         # This prevents Circle API timeouts from blocking the Control Plane startup
         logger.info("OmniClaw background initialization started (non-blocking)...")

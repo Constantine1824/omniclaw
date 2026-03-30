@@ -7,8 +7,8 @@ wallet and transaction operations.
 
 from __future__ import annotations
 
-import uuid
 import threading
+import uuid
 from typing import Any
 
 from omniclaw.core.config import Config

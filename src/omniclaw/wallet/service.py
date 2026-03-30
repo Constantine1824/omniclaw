@@ -531,15 +531,9 @@ class WalletService:
         """
         Get existing wallet set by name or create new one.
 
-        Args:
-            name: Wallet set name
-
-        Returns:
-            Wallet set info
+        Circle V2 does not reliably return names in searches, so we use
+        idempotent creation via Circle SDK which handles name collisions.
         """
-        existing = self._circle.find_wallet_set_by_name(name)
-        if existing:
-            return existing
         return self.create_wallet_set(name)
 
     def setup_agent_wallet(
@@ -565,7 +559,7 @@ class WalletService:
             blockchain=blockchain,
             count=1
         )
-        
+
         # We know it's a single wallet because count=1
         return wallet_set, wallet_or_list  # type: ignore
 

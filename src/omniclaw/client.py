@@ -969,7 +969,7 @@ class OmniClaw:
                             f"alias={key_alias}. Recovery successful."
                         )
                         break
-                        
+
                     if attempt == max_retries - 1:
                         self._logger.warning(
                             f"Final attempt failed to create nanopayment key: {e}. Wallet will start in Degraded mode."

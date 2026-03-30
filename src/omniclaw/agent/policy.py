@@ -141,7 +141,7 @@ class PolicyManager:
         """Check if recipient is allowed for a specific wallet."""
         config = self._wallet_id_to_config.get(wallet_id, {})
         recipient_cfg = RecipientConfig.from_dict(config.get("recipients"))
-        
+
         if not recipient_cfg.addresses and not recipient_cfg.domains:
             return True
 
@@ -187,7 +187,7 @@ class WalletManager:
         # PHASE 1: Pre-populate token map with alias so Auth works immediately (stateless)
         for token, config in token_map.items():
             alias = config.get("wallet_alias", "primary")
-            # We don't have the real wallet_id yet, but we map it to a placeholder 
+            # We don't have the real wallet_id yet, but we map it to a placeholder
             # so the Agent isn't rejected with "Unauthorized"
             self._policy.set_mapping(token, f"pending-{alias}", wallet_map.get(alias, {}))
 
@@ -212,12 +212,12 @@ class WalletManager:
         # Gather all parallel tasks
         tasks = [init_one(token, config) for token, config in token_map.items()]
         batch_results = await asyncio.gather(*tasks)
-        
+
         # Collect results
         for token, wallet_id in batch_results:
             if wallet_id:
                 results[token] = wallet_id
-        
+
         return results
 
     async def get_wallet_address(self, wallet_id: str) -> str | None:

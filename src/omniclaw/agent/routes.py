@@ -49,7 +49,10 @@ async def get_wallet_manager(request: Request) -> WalletManager:
 async def get_token_auth(request: Request) -> TokenAuth:
     return request.app.state.auth
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> cfafd77 (update test scripts)
 async def get_omniclaw_client(request: Request) -> OmniClaw:
     return request.app.state.client
 
