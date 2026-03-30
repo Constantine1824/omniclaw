@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import warnings
 
-# Suppress deprecation warnings from downstream dependencies (e.g. web3 using pkg_resources)
-warnings.filterwarnings("ignore", category=DeprecationWarning, module="pkg_resources")
+# Aggressively suppress noisy deprecation warnings from downstream dependencies (e.g. web3, circle-sdk)
+# This must happen before any third-party imports.
 warnings.filterwarnings("ignore", message=".*pkg_resources is deprecated.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning)
+warnings.filterwarnings("ignore", category=UserWarning, module="web3")
 
 import base64
 import json
@@ -95,10 +97,10 @@ def address() -> dict[str, Any]:
         return data
     except httpx.HTTPStatusError as e:
         typer.echo(f"Error: {e.response.json().get('detail', str(e))}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -118,10 +120,10 @@ def balance() -> dict[str, Any]:
         except Exception:
             detail = e.response.text or str(e)
         typer.echo(f"Error: {detail}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -186,10 +188,10 @@ def pay(
             return data
         except httpx.HTTPStatusError as e:
             typer.echo(f"Error: {e.response.json().get('detail', str(e))}", err=True)
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
         except Exception as e:
             typer.echo(f"Error: {e}", err=True)
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
 
     # Standard direct transfer
     if not amount:
@@ -221,10 +223,10 @@ def pay(
         return data
     except httpx.HTTPStatusError as e:
         typer.echo(f"Error: {e.response.json().get('detail', str(e))}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -267,10 +269,10 @@ def simulate(
         return data
     except httpx.HTTPStatusError as e:
         typer.echo(f"Error: {e.response.json().get('detail', str(e))}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -296,10 +298,10 @@ def list_tx(
         return data
     except httpx.HTTPStatusError as e:
         typer.echo(f"Error: {e.response.json().get('detail', str(e))}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -348,10 +350,10 @@ def create_intent(
         return data
     except httpx.HTTPStatusError as e:
         typer.echo(f"Error: {e.response.json().get('detail', str(e))}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -369,10 +371,10 @@ def confirm_intent(
         return data
     except httpx.HTTPStatusError as e:
         typer.echo(f"Error: {e.response.json().get('detail', str(e))}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -390,10 +392,10 @@ def get_intent(
         return data
     except httpx.HTTPStatusError as e:
         typer.echo(f"Error: {e.response.json().get('detail', str(e))}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -414,10 +416,10 @@ def cancel_intent(
         return data
     except httpx.HTTPStatusError as e:
         typer.echo(f"Error: {e.response.json().get('detail', str(e))}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -435,10 +437,10 @@ def can_pay(
         return data
     except httpx.HTTPStatusError as e:
         typer.echo(f"Error: {e.response.json().get('detail', str(e))}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -513,9 +515,9 @@ def serve(
         except Exception as e:
             return JSONResponse(status_code=500, content={"detail": f"Execution failed: {e}"})
 
-    typer.echo(f"Ã°ÂÂÂ OmniClaw Service exposed at http://localhost:{port}{endpoint}")
-    typer.echo(f"Ã°ÂÂÂ° Price: ${price} USDC")
-    typer.echo(f"Ã°ÂÂÂ Ã¯Â¸Â Exec: {exec_cmd}")
+    typer.echo(f"🌐 OmniClaw Service exposed at http://localhost:{port}{endpoint}")
+    typer.echo(f"💰 Price: ${price} USDC")
+    typer.echo(f"🛠️ Exec: {exec_cmd}")
 
     uvicorn.run(server_app, host="0.0.0.0", port=port)
 
@@ -552,7 +554,7 @@ def status() -> dict[str, Any]:
         return status_data
     except Exception as e:
         typer.echo(f"Error fetching status: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()
@@ -568,10 +570,10 @@ def ping() -> dict[str, Any]:
         return data
     except httpx.HTTPStatusError as e:
         typer.echo(f"Error: {e.response.json().get('detail', str(e))}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 def main() -> int:
