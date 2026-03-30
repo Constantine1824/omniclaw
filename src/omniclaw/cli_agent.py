@@ -18,10 +18,34 @@ from typing import Any
 import httpx
 import typer
 
-app = typer.Typer(help="omniclaw-cli - CLI for AI agents to make USDC payments")
+app = typer.Typer(
+    help="omniclaw-cli - CLI for AI agents to pay for things without losing control of money"
+)
+
+
+@app.callback()
+def callback() -> None:
+    """Show banner on startup."""
+    print_banner()
+
 
 CONFIG_DIR = Path.home() / ".omniclaw"
 CONFIG_FILE = CONFIG_DIR / "config.json"
+
+BANNER = r"""
+   ____  __  __ _   _ ___ ____ _        ___        __
+  / __ \|  \/  | \ | |_ _/ ___| |      / \ \      / /
+ | |  | | |\/| |  \| || | |   | |     / _ \ \ /\ / / 
+ | |__| | |  | | |\  || | |___| |___ / ___ \ V  V /  
+  \____/|_|  |_|_| \_|___\____|_____/_/   \_\_/\_/ 
+
+  Economic Execution and Control Layer for Agentic Systems
+"""
+
+
+def print_banner():
+    """Print the OmniClaw CLI banner."""
+    typer.echo(typer.style(BANNER, fg=typer.colors.CYAN, bold=True))
 
 
 def load_config() -> dict[str, Any]:
@@ -58,9 +82,9 @@ def get_client() -> httpx.Client:
 
 @app.command()
 def configure(
-    server_url: str = typer.Option(..., "--server-url", help="OmniClaw server URL"),
-    token: str = typer.Option(..., "--token", help="Agent token"),
-    wallet: str = typer.Option(..., "--wallet", help="Wallet alias"),
+    server_url: str | None = typer.Option(None, "--server-url", help="OmniClaw server URL"),
+    token: str | None = typer.Option(None, "--token", help="Agent token"),
+    wallet: str | None = typer.Option(None, "--wallet", help="Wallet alias"),
     show: bool = typer.Option(False, "--show", help="Show current config"),
 ) -> None:
     """Configure omniclaw-cli with server details."""
@@ -71,6 +95,10 @@ def configure(
             return
         typer.echo(json.dumps(config, indent=2))
         return
+
+    if not server_url or not token or not wallet:
+        typer.echo("Error: --server-url, --token, and --wallet are required", err=True)
+        raise typer.Exit(1)
 
     config = {
         "server_url": server_url.rstrip("/"),
@@ -164,7 +192,7 @@ def pay(
 
     # If recipient is a URL, handle x402 flow
     if recipient.startswith("http"):
-        typer.echo(f"Ã°ÂÂÂ Paying for x402 service: {recipient}")
+        typer.echo(f"🚀 Paying for x402 service: {recipient}")
         payload: dict[str, Any] = {
             "url": recipient,
             "method": method,
@@ -182,7 +210,7 @@ def pay(
             data = response.json()
             if output:
                 Path(output).write_text(json.dumps(data, indent=2))
-                typer.echo(f"Ã¢ÂÂ Response saved to {output}")
+                typer.echo(f"✅ Response saved to {output}")
             else:
                 typer.echo(json.dumps(data, indent=2))
             return data
@@ -548,8 +576,10 @@ def status() -> dict[str, Any]:
         typer.echo(f"Wallet:    {status_data['Wallet']}")
         typer.echo(f"Balance:   {status_data['Balance']}")
         typer.echo(f"Guards:    {status_data['Guards']}")
-        typer.echo(f"Circle:    {status_data['Circle']} Ã¢ÂÂ")
-        typer.echo(f"Circuit:   {status_data['Circuit']} Ã¢ÂÂ")
+        circle_icon = "✅" if status_data["Circle"] == "connected" else "❌"
+        circuit_icon = "✅" if status_data["Circuit"] == "CLOSED" else "⚠️"
+        typer.echo(f"Circle:    {status_data['Circle']} {circle_icon}")
+        typer.echo(f"Circuit:   {status_data['Circuit']} {circuit_icon}")
 
         return status_data
     except Exception as e:
@@ -560,12 +590,15 @@ def status() -> dict[str, Any]:
 @app.command()
 def ping() -> dict[str, Any]:
     """Health check."""
+    from omniclaw import __version__
+
     client = get_client()
 
     try:
         response = client.get("/api/v1/health")
         response.raise_for_status()
         data = response.json()
+        data["version"] = __version__
         typer.echo(json.dumps(data, indent=2))
         return data
     except httpx.HTTPStatusError as e:

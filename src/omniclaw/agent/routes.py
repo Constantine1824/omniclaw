@@ -66,7 +66,7 @@ async def get_current_agent(
 
 @router.get("/health", response_model=HealthResponse)
 async def health_check():
-    return HealthResponse(status="healthy")
+    return HealthResponse(status="ok")
 
 
 @router.get("/address", response_model=AddressResponse)
