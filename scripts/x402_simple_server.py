@@ -1,69 +1,58 @@
-import base64
-import json
+"""
+Simple x402 Facilitator Mock Server.
+Implements the x402 protocol (402 Payment Required) for testing.
+"""
+
 import uvicorn
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from decimal import Decimal
+import uuid
+import time
 
 app = FastAPI()
 
-# Configuration matches tests/test_server_integration.py
-PORT = 4022
-HOST = "127.0.0.1"
-
-def get_x402_header(amount_micros: int, label: str):
-    requirements = {
-        "x402Version": 2,
-        "scheme": "exact",
-        "accepts": [{
-            "scheme": "exact",
-            "network": "eip155:84532", # Base Sepolia
-            "amount": str(amount_micros),
-            "payTo": "0x1234567890123456789012345678901234567890", # Dummy
-            "label": label
-        }, {
-            "scheme": "GatewayWalletBatched",
-            "network": "eip155:5042002", # ARC Testnet
-            "amount": str(amount_micros),
-            "payTo": "0x1234567890123456789012345678901234567890"
-        }]
-    }
-    return base64.b64encode(json.dumps(requirements).encode()).decode()
-
-@app.get("/")
-@app.get("/health")
-@app.get("/api/status")
-async def health():
-    return {"status": "ok"}
+# In-memory store for paid requests (just for testing idempotency logic)
+PAID_REQUESTS = {}
 
 @app.get("/weather")
-async def weather(request: Request):
-    sig = request.headers.get("payment-signature")
-    if not sig or sig == "invalid-signature-data":
+async def get_weather(request: Request, authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("x402 "):
         return Response(
             status_code=402,
-            headers={"PAYMENT-REQUIRED": get_x402_header(1000, "Weather Data")}
+            headers={
+                "WWW-Authenticate": 'x402 payment_url="http://localhost:8000/x402/facilitator", invoice_id="' + str(uuid.uuid4()) + '"',
+                "x402-amount": "1000",
+                "x402-token": "USDC",
+            },
+            content="Payment Required",
         )
-    return {"weather": "sunny", "temp": 72}
+    return {"weather": "sunny", "temperature": 25}
 
-@app.get("/premium/content")
-async def premium_content(request: Request):
-    sig = request.headers.get("payment-signature")
-    if not sig:
+@app.get("/premium-content")
+async def get_premium(request: Request, authorization: str = Header(None)):
+    if not authorization or not authorization.startswith("x402 "):
         return Response(
             status_code=402,
-            headers={"PAYMENT-REQUIRED": get_x402_header(10000, "Premium Content")}
+            headers={
+                "WWW-Authenticate": 'x402 payment_url="http://localhost:8000/x402/facilitator", invoice_id="' + str(uuid.uuid4()) + '"',
+                "x402-amount": "10000",
+                "x402-token": "USDC",
+            },
+            content="Payment Required",
         )
-    return {"content": "Ultra HD Video Stream"}
+    return {"content": "Ultra secret data 💎"}
 
-@app.get("/premium/data")
-async def premium_data(request: Request):
-    sig = request.headers.get("payment-signature")
-    if not sig:
-        return Response(
-            status_code=402,
-            headers={"PAYMENT-REQUIRED": get_x402_header(100000, "Premium Data")}
-        )
-    return {"data": [1, 2, 3, 4, 5]}
+@app.post("/x402/facilitator")
+async def facilitator(request: Request):
+    data = await request.json()
+    # Mock successful settlement
+    return {
+        "status": "success",
+        "transaction_id": f"mock_tx_{uuid.uuid4().hex[:8]}",
+        "settled_at": int(time.time()),
+        "facilitator_sig": "mock_signature_0x123",
+    }
 
 if __name__ == "__main__":
-    uvicorn.run(app, host=HOST, port=PORT)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -139,6 +139,10 @@ class TestGatewayMiddleware:
         for accept in body["accepts"]:
             assert accept["scheme"] == "exact"
 
+    async def test_402_body_has_max_timeout(self):
+        middleware = GatewayMiddleware(
+            seller_address="0x" + "a" * 40,
+            nanopayment_client=_make_client(),
             supported_kinds=_make_kinds(),
         )
         body = await middleware._build_402_response("$0.001")
