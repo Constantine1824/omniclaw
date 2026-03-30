@@ -147,7 +147,7 @@ from omniclaw.protocols.nanopayments import (
 )
 from omniclaw.trust.gate import TrustGate
 
-__version__ = "0.1.0"
+__version__ = "0.0.2"
 __all__ = [
     # Main Client
     "OmniClaw",
