@@ -169,7 +169,9 @@ class PolicyManager:
 
         return recipient_cfg.mode != "whitelist"
 
-    def check_limits(self, amount: Decimal, wallet_id: str | None = None) -> tuple[bool, str | None]:
+    def check_limits(
+        self, amount: Decimal, wallet_id: str | None = None
+    ) -> tuple[bool, str | None]:
         if wallet_id is None:
             limits = self.get_policy().limits
         else:
@@ -230,7 +232,9 @@ class WalletManager:
                     wallet = res
 
                 self._policy.set_mapping(token, wallet.id, wallet_cfg)
-                self._logger.info(f"Successfully initialized wallet '{wallet.id}' for agent '{alias}'")
+                self._logger.info(
+                    f"Successfully initialized wallet '{wallet.id}' for agent '{alias}'"
+                )
                 return token, wallet.id
             except Exception as e:
                 self._logger.error(f"Failed to initialize wallet for '{alias}': {e}")

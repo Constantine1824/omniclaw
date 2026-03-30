@@ -555,9 +555,7 @@ class WalletService:
         """
         # Simply use the underlying create_agent_wallet logic for consistency
         wallet_set, wallet_or_list = self.create_agent_wallet(
-            agent_name=agent_name,
-            blockchain=blockchain,
-            count=1
+            agent_name=agent_name, blockchain=blockchain, count=1
         )
 
         # We know it's a single wallet because count=1

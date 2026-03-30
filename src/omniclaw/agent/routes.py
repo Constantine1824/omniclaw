@@ -49,6 +49,7 @@ async def get_wallet_manager(request: Request) -> WalletManager:
 async def get_token_auth(request: Request) -> TokenAuth:
     return request.app.state.auth
 
+
 async def get_omniclaw_client(request: Request) -> OmniClaw:
     return request.app.state.client
 
@@ -74,7 +75,10 @@ async def get_address(
     wallet_mgr: WalletManager = Depends(get_wallet_manager),
 ):
     if agent.wallet_id.startswith("pending-"):
-        raise HTTPException(status_code=425, detail="Wallet is currently initializing. Please try again in a few seconds.")
+        raise HTTPException(
+            status_code=425,
+            detail="Wallet is currently initializing. Please try again in a few seconds.",
+        )
 
     address = await wallet_mgr.get_wallet_address(agent.wallet_id)
     if not address:
@@ -93,7 +97,10 @@ async def get_balance(
     wallet_mgr: WalletManager = Depends(get_wallet_manager),
 ):
     if agent.wallet_id.startswith("pending-"):
-        raise HTTPException(status_code=425, detail="Wallet is currently initializing. Please try again in a few seconds.")
+        raise HTTPException(
+            status_code=425,
+            detail="Wallet is currently initializing. Please try again in a few seconds.",
+        )
 
     balance = await wallet_mgr.get_wallet_balance(agent.wallet_id)
     if balance is None:
@@ -114,7 +121,10 @@ async def pay(
     client: OmniClaw = Depends(get_omniclaw_client),
 ):
     if agent.wallet_id.startswith("pending-"):
-        raise HTTPException(status_code=425, detail="Wallet is currently initializing. Please try again in a few seconds.")
+        raise HTTPException(
+            status_code=425,
+            detail="Wallet is currently initializing. Please try again in a few seconds.",
+        )
 
     if not policy_mgr.is_valid_recipient(request.recipient, agent.wallet_id):
         raise HTTPException(status_code=400, detail="Recipient not allowed by policy")
@@ -383,8 +393,8 @@ async def list_wallets(
     address = await wallet_mgr.get_wallet_address(agent.wallet_id)
 
     alias = agent.wallet_id.replace("pending-", "") if is_pending else "primary"
-        # Simplest is just to use the alias from the policy if we can find it
-        # but for now "primary" is a safe default for single-agent case.
+    # Simplest is just to use the alias from the policy if we can find it
+    # but for now "primary" is a safe default for single-agent case.
 
     policy = policy_mgr.get_policy()
 
