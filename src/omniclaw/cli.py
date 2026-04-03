@@ -17,7 +17,6 @@ from omniclaw.onboarding import (
     print_doctor_status,
     run_export_env_cli,
     run_import_secret_cli,
-    run_setup_cli,
 )
 
 
