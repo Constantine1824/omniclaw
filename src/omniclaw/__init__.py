@@ -115,9 +115,6 @@ from omniclaw.protocols.nanopayments import (
     InvalidSignatureError,
     KeyNotFoundError,
     MiddlewareError,
-    NanoKeyStore,
-    # Vault & Keys
-    NanoKeyVault,
     # Adapter
     NanopaymentAdapter,
     # Client
@@ -214,9 +211,6 @@ __all__ = [
     # Client
     "NanopaymentClient",
     "NanopaymentHTTPClient",
-    # Vault & Keys
-    "NanoKeyVault",
-    "NanoKeyStore",
     # Adapter
     "NanopaymentAdapter",
     "NanopaymentProtocolAdapter",
