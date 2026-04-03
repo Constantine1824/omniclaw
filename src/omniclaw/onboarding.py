@@ -796,9 +796,7 @@ def backup_info() -> dict[str, Any]:
     if recovery_file:
         mode = stat.S_IMODE(recovery_file.stat().st_mode)
         if mode & 0o077:
-            warnings.append(
-                f"Recovery file permissions are {oct(mode)}. Expected 0o600."
-            )
+            warnings.append(f"Recovery file permissions are {oct(mode)}. Expected 0o600.")
     else:
         mode = None
 
@@ -842,10 +840,7 @@ def print_backup_info(*, as_json: bool = False) -> None:
         f"  Recovery file:       {info['recovery_file_path'] or 'not found'}  "
         f"{tag(info['recovery_file_exists'])}"
     )
-    print(
-        f"  .env file:           {info['env_file_path']}  "
-        f"{tag(info['env_file_exists'])}"
-    )
+    print(f"  .env file:           {info['env_file_path']}  {tag(info['env_file_exists'])}")
     print()
 
     if info["warnings"]:
@@ -855,10 +850,13 @@ def print_backup_info(*, as_json: bool = False) -> None:
         print()
 
     print("Recommended actions:")
-    print("  - Copy the recovery file to a secure off-machine location (e.g. password manager, encrypted USB).")
-    print("  - The recovery file is required to reset your entity secret via the Circle console if it is lost.")
+    print(
+        "  - Copy the recovery file to a secure off-machine location (e.g. password manager, encrypted USB)."
+    )
+    print(
+        "  - The recovery file is required to reset your entity secret via the Circle console if it is lost."
+    )
     print("  - Do NOT commit the recovery file or credentials.json to version control.")
-
 
 
 def run_export_env_cli(
