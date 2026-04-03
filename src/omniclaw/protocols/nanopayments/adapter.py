@@ -537,8 +537,9 @@ class NanopaymentAdapter:
 
         # Step 9: Seller-side settlement via PAYMENT-RESPONSE header (x402 v2)
         content_delivered = _is_success_status(retry_resp.status_code)
-        payment_response = retry_resp.headers.get("payment-response") or retry_resp.headers.get(
-            "PAYMENT-RESPONSE"
+        payment_response = (
+            retry_resp.headers.get("payment-response")
+            or retry_resp.headers.get("PAYMENT-RESPONSE")
         )
         settlement_succeeded = False
         transaction = ""

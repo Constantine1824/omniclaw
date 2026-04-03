@@ -554,7 +554,9 @@ async def pay(
         requires_confirmation = bool(
             result.metadata.get("confirmation_required") if result.metadata else False
         )
-        confirmation_id = result.metadata.get("confirmation_id") if result.metadata else None
+        confirmation_id = (
+            result.metadata.get("confirmation_id") if result.metadata else None
+        )
 
         return PayResponse(
             success=result.success,
@@ -653,12 +655,9 @@ async def list_transactions(
                         if getattr(tx, "status", None) is not None
                         else (
                             tx.state.value
-                            if getattr(tx, "state", None) is not None and hasattr(tx.state, "value")
-                            else (
-                                str(tx.state)
-                                if getattr(tx, "state", None) is not None
-                                else "failed"
-                            )
+                            if getattr(tx, "state", None) is not None
+                            and hasattr(tx.state, "value")
+                            else (str(tx.state) if getattr(tx, "state", None) is not None else "failed")
                         )
                     ),
                     tx_hash=tx.tx_hash,
@@ -666,7 +665,9 @@ async def list_transactions(
                         tx.created_at.isoformat()
                         if getattr(tx, "created_at", None)
                         else (
-                            tx.create_date.isoformat() if getattr(tx, "create_date", None) else None
+                            tx.create_date.isoformat()
+                            if getattr(tx, "create_date", None)
+                            else None
                         )
                     ),
                 )

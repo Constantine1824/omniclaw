@@ -290,7 +290,8 @@ class OmniClaw:
         network = network_to_caip2(self._config.network)
         if not network:
             raise ConfigurationError(
-                "Nanopayments network is not configured. Set OMNICLAW_NETWORK to an EVM chain."
+                "Nanopayments network is not configured. Set OMNICLAW_NETWORK "
+                "to an EVM chain."
             )
         return network
 
@@ -333,7 +334,9 @@ class OmniClaw:
                 auto_topup_amount=self._config.nanopayments_topup_amount,
                 strict_settlement=self._config.payment_strict_settlement,
             )
-            self._logger.info(f"Nanopayments initialized (direct private key, network={network})")
+            self._logger.info(
+                f"Nanopayments initialized (direct private key, network={network})"
+            )
         except Exception as e:
             self._logger.warning(
                 f"Nanopayments initialization failed: {e}. Disabling nanopayments."

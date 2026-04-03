@@ -1,8 +1,8 @@
 # OmniClaw
 
-**OmniClaw is the execution layer for AI-native payments.** It sits between raw wallet infrastructure and production payment flows so AI agents and AI-powered apps can move money with better safety, trust, and operator control.
+**Economic Execution and Control Layer for Agentic Systems** — Policy-controlled payments with Circle Gateway nanopayments (EIP-3009), x402 protocol support, gasless transactions, and per-agent wallet isolation.
 
-The OmniClaw CLI + Financial Policy Engine let autonomous agents pay and earn safely at machine speed.
+📄 [Read the Whitepaper](https://www.omniclaw.ai/whitepaper) · 📦 [PyPI](https://pypi.org/project/omniclaw/) · 🧪 [Tests: 1220 passed](tests/)
 
 ---
 
@@ -13,6 +13,8 @@ In the Agent Era, software can act economically. But current wallets fail when s
 - **Full key access** = extreme risk (agent can drain the wallet)
 - **Human approval** = kills speed and autonomy
 - **No spending limits** = agent can spend unlimited
+
+Where Stripe helps merchants accept human payments, OmniClaw governs autonomous agents making machine payments — with policy, trust verification, and concurrency safety built in.
 
 **OmniClaw solves this** by separating:
 1. **Financial Policy Engine** (owner runs) - holds private keys, enforces policy
@@ -96,8 +98,32 @@ Circle's Gateway supports **EIP-3009** - off-chain authorization:
 - No gas needed for payments
 - Instant settlement
 - Circle batches and settles on-chain
+- Sub-cent transactions are economically viable
 
-This is what makes agent-to-agent commerce practical.
+This is what makes agent-to-agent commerce practical — agents can trade at high frequency without bleeding gas on every transaction.
+
+### 4. Seller Side: Accept Payments from Other Agents
+
+OmniClaw isn't just for buyers. You can protect your own endpoint behind x402 and accept payments from other agents:
+
+```python
+from omniclaw.protocols.nanopayments import GatewayMiddleware
+
+# Protect any async endpoint
+middleware = GatewayMiddleware(
+    price="0.01",  # 0.01 USDC per call
+    seller_address="0xYourAddress",
+)
+
+app = FastAPI()
+app.add_middleware(GatewayMiddleware, price="0.01")
+
+@app.get("/api/data")
+async def get_data():
+    return {"data": "expensive information"}
+```
+
+This opens your service to agent-to-agent commerce — other agents can pay your endpoint using gasless nanopayments.
 
 ---
 
@@ -107,12 +133,14 @@ This is what makes agent-to-agent commerce practical.
 
 ```bash
 pip install omniclaw
+# or
+uv add omniclaw
 ```
 
-### 2. Environment Variables
+### 2. Environment Variables (Required)
 
 ```bash
-# Required
+# Required to run
 export OMNICLAW_PRIVATE_KEY="0x..."     # Your agent's private key
 export OMNICLAW_AGENT_TOKEN="your-token" # Token from policy.json
 export OMNICLAW_AGENT_POLICY_PATH="/path/to/policy.json"
@@ -124,7 +152,7 @@ export OMNICLAW_ENV="production"         # set for mainnet
 
 # RPC for on-chain operations
 export OMNICLAW_RPC_URL="https://..."
-# Nanopayments network is derived from OMNICLAW_NETWORK (EVM chain)
+# Nanopayments CAIP-2 is derived from OMNICLAW_NETWORK (EVM only)
 ```
 
 ### 3. Start Financial Policy Engine (Owner)
@@ -291,4 +319,4 @@ For full policy options, see **[docs/POLICY_REFERENCE.md](docs/POLICY_REFERENCE.
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+MIT — © 2026 [Omnuron AI](https://www.omniclaw.ai/). See [LICENSE](LICENSE) for details.
