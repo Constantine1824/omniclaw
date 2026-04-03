@@ -1,8 +1,8 @@
 # OmniClaw
 
-**The first agentic payment network: policy-controlled, gasless, and real money-ready.**
+**OmniClaw is the execution layer for AI-native payments.** It sits between raw wallet infrastructure and production payment flows so AI agents and AI-powered apps can move money with better safety, trust, and operator control.
 
-OmniClaw CLI + Financial Policy Engine let autonomous agents pay and earn safely at machine speed.
+The OmniClaw CLI + Financial Policy Engine let autonomous agents pay and earn safely at machine speed.
 
 ---
 
