@@ -14,7 +14,7 @@ requires:
       Scoped agent token tied to your wallet. Set by the owner before your
       session starts. Never print, log, or transmit this value. If it is
       missing, stop and notify the owner — you cannot proceed without it.
-version: 0.0.2
+version: 0.0.3
 author: Omnuron AI
 ---
 
