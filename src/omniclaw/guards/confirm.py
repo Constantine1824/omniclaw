@@ -23,6 +23,7 @@ class ConfirmRequiredError(ValueError):
         super().__init__("Payment requires confirmation")
         self.confirmation_id = confirmation_id
 
+
 # Type for confirmation callback
 ConfirmCallback = Callable[[PaymentContext], Awaitable[bool]]
 

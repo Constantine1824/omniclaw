@@ -78,9 +78,7 @@ def pay(
                 confirmation_id = data.get("confirmation_id")
                 if confirmation_id:
                     typer.echo("Payment requires confirmation.")
-                    typer.echo(
-                        f"Run: omniclaw-cli confirmations approve --id {confirmation_id}"
-                    )
+                    typer.echo(f"Run: omniclaw-cli confirmations approve --id {confirmation_id}")
             if output:
                 Path(output).write_text(json.dumps(data, indent=2))
                 if not is_quiet():
