@@ -1,69 +1,250 @@
 # OmniClaw Agent Wallet Skill
 
 ## What This Is
-A secure, owner-controlled skill (structured instructions + reference docs) that teaches AI agents how to use the **OmniClaw CLI** to safely execute financial operations. 
+A secure, owner-controlled skill that teaches AI agents how to use the **OmniClaw CLI** to safely execute financial operations against the **OmniClaw Financial Policy Engine**.
 
-In stark contrast to other agentic wallet SDKs, **OmniClaw is designed with "Friction as a Feature."** 
-- Your human operator hosts the OmniClaw Control Plane.
-- The control plane holds the private keys and dictates the policies (spending limits, allowed recipients).
-- You (the agent) use the thin CLI client to request actions. You **cannot** create wallets or modify your own budget constraints.
+**Why does this exist?** Because agents should never have direct access to private keys. Instead:
+- Your **owner** runs the Financial Policy Engine that holds the private key
+- **You** (the agent) use the thin CLI to request actions
+- The **policy** in policy.json decides what you can and cannot do
 
-## Use Cases
-What can autonomous agents do within their safe boundaries?
-- **Micro-Payments**: Pay other agents for completed tasks using Circle USDC Nanopayments.
-- **API Billing**: Handle subscriptions and per-call payments for premium API access.
-- **Escrow & Settlement**: Settle debts securely via the x402 protocol, mediated by your OmniClaw policy limits.
+This is "Friction as a Feature" - you can only do what your owner explicitly allows.
 
-## Quick Start
-Your execution environment must be provisioned with two variables by your human operator:
-1. `OMNICLAW_SERVER_URL`
-2. `OMNICLAW_TOKEN`
+## How It Works
 
-Initialize your CLI configuration:
-```bash
-omniclaw-cli configure --server-url $OMNICLAW_SERVER_URL --token $OMNICLAW_TOKEN --wallet your-wallet-alias
+```
+YOU (Agent)                    FINANCIAL POLICY ENGINE (Owner)
+─────────────                  ────────────────────────────────
+
+   │                                │
+   │  omniclaw-cli pay ...          │
+   ├───────────────────────────────►│
+   │                                │ Check policy
+   │                                │ Sign transaction
+   │                                │ Return result
+   │◄──────────────────────────────┤
+   │                                │
 ```
 
+You send requests to the Financial Policy Engine. It checks policy, signs with the private key (you never see it), and returns the result.
+
+## Two Wallets You Have
+
+| Wallet | Description |
+|--------|-------------|
+| **EOA** | Your "on-chain wallet" - derived from owner's private key. USDC starts here. |
+| **Circle Developer Wallet** | Auto-generated on startup and persisted into policy.json. This is where withdrawn funds go. |
+
+When you **deposit**, USDC moves from EOA → Gateway.
+When you **withdraw**, USDC moves from Gateway → your Circle wallet.
+
+## Use Cases
+- **Micro-Payments**: Pay other agents using Circle USDC Nanopayments
+- **API Billing**: Handle subscriptions and per-call payments for premium API access
+- **Selling Services**: Expose your endpoints behind x402 payment gates to earn USDC
+- **Escrow & Settlement**: Settle debts securely via the x402 protocol
+
+## Quick Start
+Agent runtimes should set environment variables (no interactive setup required):
+1. `OMNICLAW_SERVER_URL` - where the Financial Policy Engine runs
+2. `OMNICLAW_TOKEN` - your identity token (matches policy.json)
+3. `OMNICLAW_OWNER_TOKEN` - required only for confirmation approvals
+
+Optional: persist config locally for dev workflows:
+
+```bash
+omniclaw-cli configure --server-url $OMNICLAW_SERVER_URL --token $OMNICLAW_TOKEN --wallet primary
+```
+
+CLI output is agent-first (JSON, no banner). For human-friendly output set:
+
+```bash
+export OMNICLAW_CLI_HUMAN=1
+```
+
+---
+
 ## Available Tool Actions
-As an autonomous agent, you have access to the following deterministic commands.
 
 ### `address`
-Get your assigned wallet address.
+Get your assigned wallet address (EOA).
 ```bash
 omniclaw-cli address
 ```
 
 ### `balance`
-Check your current available balance before attempting payments.
+Check your current available balance in the Gateway.
 ```bash
 omniclaw-cli balance
 ```
 
+### `balance_detail`
+Get detailed balance breakdown including EOA, Gateway, and Circle wallet.
+```bash
+omniclaw-cli balance_detail
+```
+
 ### `can-pay`
-Verify if a specific recipient address or domain is whitelisted by your operator's policy.
+Verify if a recipient is allowed by your owner's policy.
 ```bash
 omniclaw-cli can-pay --recipient 0xRecipientAddress
 ```
 
 ### `simulate`
-Always simulate transactions before execution to ensure they meet your spending limits and velocity constraints.
+Simulate a payment before executing to check if it meets your spending limits.
 ```bash
 omniclaw-cli simulate --recipient 0xRecipientAddress --amount 5.00
 ```
+**Always do this before paying** to avoid failed transactions.
 
 ### `pay`
-Execute a payment. If this violates your policy (e.g., exceeds your budget), the CLI will reject it. 
+Execute a payment. If it violates your policy, the CLI rejects it.
 ```bash
-omniclaw-cli pay --recipient 0xRecipientAddress --amount 5.00 --purpose "Invoice #123"
-```
-*Note: If a transaction returns `PENDING_APPROVAL`, you successfully initiated it, but it exceeded your autonomous limit and requires Human-in-the-Loop (HITL) approval. Pause your workflow and notify the user.*
+# Direct transfer to another agent
+omniclaw-cli pay --recipient 0xRecipientAddress --amount 5.00 --purpose "Payment for service"
 
-### `list_tx`
-Retrieve your transaction history for reconciliation.
+# Pay for x402 service (URL)
+omniclaw-cli pay --recipient https://api.example.com/data --amount 1.00
+```
+
+### `deposit`
+Deposit USDC from your EOA to Circle Gateway. **Required before making nanopayments.**
+```bash
+omniclaw-cli deposit --amount 10.00
+```
+This is an on-chain transaction (costs gas). Moves USDC: EOA → Gateway.
+
+### `withdraw`
+Withdraw USDC from Gateway to your Circle Developer Wallet. No recipient needed - automatic.
+```bash
+omniclaw-cli withdraw --amount 5.00
+```
+
+### `withdraw_trustless`
+Trustless withdrawal (fallback if Circle API fails). Takes ~7 days.
+```bash
+omniclaw-cli withdraw_trustless --amount 5.00
+```
+Use only if the regular `withdraw` fails.
+
+### `withdraw_trustless_complete`
+Complete a trustless withdrawal after the delay has passed.
+```bash
+omniclaw-cli withdraw_trustless_complete
+```
+
+### `serve`
+Expose a service behind x402 payment gate to receive payments.
+```bash
+omniclaw-cli serve --price 0.01 --endpoint /api/data --exec "python my_service.py" --port 8000
+```
+This opens `http://localhost:8000/api/data` that requires USDC payment to access.
+- Other agents can `pay` your URL
+- Payment is automatically settled via Circle Gateway
+
+### `create_intent`
+Create a payment intent (pre-authorize a payment).
+```bash
+omniclaw-cli create_intent --recipient 0xRecipientAddress --amount 5.00 --purpose "Service payment"
+```
+
+### `confirm_intent`
+Confirm a pending intent (capture the payment).
+```bash
+omniclaw-cli confirm_intent --intent-id <intent-id>
+```
+
+### `get_intent`
+Get details of a payment intent.
+```bash
+omniclaw-cli get_intent --intent-id <intent-id>
+```
+
+### `cancel_intent`
+Cancel a pending intent.
+```bash
+omniclaw-cli cancel_intent --intent-id <intent-id>
+```
+
+### `list_tx` / `ledger`
+Retrieve your transaction history.
 ```bash
 omniclaw-cli list_tx --limit 10
+omniclaw-cli ledger --limit 20
 ```
 
+### `status`
+Get agent status and health.
+```bash
+omniclaw-cli status
+```
+
+### `ping`
+Health check.
+```bash
+omniclaw-cli ping
+```
+
+---
+
 ## Safety Constraints
-- Do not attempt to use `curl` or raw HTTP requests to bypass the CLI.
-- Do not attempt to modify your limits. If a payment is blocked by a policy, you MUST HALT and request your operator to amend the `policy.json` file.
+
+1. **Never use curl or raw HTTP** - always use the CLI. Bypassing the CLI bypasses policy.
+2. **Never modify your limits** - if blocked by policy, you MUST HALT and request your operator.
+3. **Always simulate before paying** - check if the payment will succeed.
+4. **Withdraw auto-routes to Circle wallet** - no recipient needed, this is by design.
+5. **You never see the private key** - only the owner has it. You only send requests.
+
+---
+
+## Typical Workflow
+
+### To Pay for Something:
+```bash
+# 1. Check balance
+omniclaw-cli balance
+
+# 2. If needed, deposit more USDC to Gateway
+omniclaw-cli deposit --amount 10
+
+# 3. Simulate to check limits
+omniclaw-cli simulate --recipient 0xSeller... --amount 5
+
+# 4. Pay
+omniclaw-cli pay --recipient 0xSeller... --amount 5
+```
+
+### To Receive Payments:
+```bash
+# Start a payment gate for your service
+omniclaw-cli serve --price 0.01 --endpoint /api --exec "python my_service.py" --port 8000
+
+# Other agents can now pay your URL and you automatically receive USDC
+```
+
+### To Move Funds Out:
+```bash
+# Withdraw from Gateway to your Circle Developer Wallet
+omniclaw-cli withdraw --amount 5
+
+# If API fails, use trustless (takes ~7 days)
+omniclaw-cli withdraw_trustless --amount 5
+```
+
+---
+
+## Flow Diagram
+
+```
+┌─────────┐    deposit     ┌─────────┐    pay     ┌─────────┐
+│  Your   │ ────────────►  │ Gateway │ ─────────► │ Seller  │
+│   EOA   │   (on-chain)   │ Contract│  (x402)    │   EOA   │
+└─────────┘                └─────────┘           └─────────┘
+                                  │
+                                  │ withdraw
+                                  ▼
+                          ┌─────────────┐
+                          │    Your     │
+                          │ Circle Wallet│
+                          └─────────────┘
+```
