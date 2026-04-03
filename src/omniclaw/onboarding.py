@@ -316,7 +316,6 @@ def register_entity_secret(
         raise SetupError("Entity Secret must be valid hexadecimal") from None
 
     # Default to secure config directory
-    # Default to secure config directory
     recovery_dir = get_config_dir() if recovery_dir is None else Path(recovery_dir).resolve()
 
     # Ensure directory exists
