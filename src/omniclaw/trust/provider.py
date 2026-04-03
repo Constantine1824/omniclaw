@@ -20,7 +20,6 @@ For fallback (spec §7.2), pass comma-separated URLs:
 from __future__ import annotations
 
 import os
-from typing import Any
 
 import httpx
 
@@ -28,7 +27,6 @@ from omniclaw.core.erc8004 import (
     get_identity_registry,
     get_reputation_registry,
     get_validation_registry,
-    is_erc8004_supported,
 )
 from omniclaw.core.logging import get_logger
 from omniclaw.identity.types import FeedbackSignal
@@ -139,7 +137,13 @@ class ERC8004Provider:
     def _encode_address(addr: str) -> str:
         """Encode address as 32-byte hex (left-padded)."""
         addr_clean = addr.lower().replace("0x", "")
-        return f"{addr_clean:>064}"
+        return addr_clean.zfill(64)
+
+    @staticmethod
+    def _encode_bytes32(hex_value: str) -> str:
+        """Encode hex string as exactly 32 bytes."""
+        value_clean = hex_value.lower().replace("0x", "")
+        return value_clean.zfill(64)
 
     @staticmethod
     def _decode_address(hex_data: str) -> str:
@@ -161,14 +165,14 @@ class ERC8004Provider:
         if not hex_data or len(hex_data) < offset + 64:
             return ""
         # Read string offset pointer
-        str_offset = int(hex_data[offset:offset + 64], 16) * 2
+        str_offset = int(hex_data[offset : offset + 64], 16) * 2
         if len(hex_data) < str_offset + 64:
             return ""
         # Read string length
-        str_len = int(hex_data[str_offset:str_offset + 64], 16)
+        str_len = int(hex_data[str_offset : str_offset + 64], 16)
         # Read string bytes
         str_start = str_offset + 64
-        str_hex = hex_data[str_start:str_start + str_len * 2]
+        str_hex = hex_data[str_start : str_start + str_len * 2]
         try:
             return bytes.fromhex(str_hex).decode("utf-8", errors="replace")
         except (ValueError, UnicodeDecodeError):
@@ -229,19 +233,19 @@ class ERC8004Provider:
 
             except httpx.TimeoutException:
                 logger.warning(
-                    f"RPC timeout from provider {i+1}/{len(self._rpc_urls)}: {rpc_url} — "
+                    f"RPC timeout from provider {i + 1}/{len(self._rpc_urls)}: {rpc_url} — "
                     f"{'falling back' if i < len(self._rpc_urls) - 1 else 'no more providers'}"
                 )
                 last_error = httpx.TimeoutException(f"Timeout: {rpc_url}")
                 continue
             except httpx.HTTPStatusError as e:
                 logger.warning(
-                    f"RPC HTTP {e.response.status_code} from provider {i+1}/{len(self._rpc_urls)}: {rpc_url}"
+                    f"RPC HTTP {e.response.status_code} from provider {i + 1}/{len(self._rpc_urls)}: {rpc_url}"
                 )
                 last_error = e
                 continue
             except Exception as e:
-                logger.error(f"RPC error from provider {i+1}/{len(self._rpc_urls)}: {e}")
+                logger.error(f"RPC error from provider {i + 1}/{len(self._rpc_urls)}: {e}")
                 last_error = e
                 continue
 
@@ -338,13 +342,13 @@ class ERC8004Provider:
         # Decode dynamic array: offset → length → elements
         try:
             offset = int(result[0:64], 16) * 2
-            count = int(result[offset:offset + 64], 16)
+            count = int(result[offset : offset + 64], 16)
             clients = []
             pos = offset + 64
             for _ in range(min(count, 1000)):  # Cap at 1000 to prevent DoS
                 if pos + 64 > len(result):
                     break
-                addr = self._decode_address(result[pos:pos + 64])
+                addr = self._decode_address(result[pos : pos + 64])
                 if addr:
                     clients.append(addr)
                 pos += 64
@@ -353,7 +357,10 @@ class ERC8004Provider:
             return []
 
     async def get_last_feedback_index(
-        self, agent_id: int, client_address: str, network: str,
+        self,
+        agent_id: int,
+        client_address: str,
+        network: str,
     ) -> int:
         """Read getLastIndex(agentId, clientAddress) → last feedback index."""
         registry = get_reputation_registry(network)
@@ -368,7 +375,11 @@ class ERC8004Provider:
         return 0
 
     async def read_feedback(
-        self, agent_id: int, client_address: str, index: int, network: str,
+        self,
+        agent_id: int,
+        client_address: str,
+        index: int,
+        network: str,
     ) -> FeedbackSignal | None:
         """
         Read a single feedback entry.
@@ -395,7 +406,7 @@ class ERC8004Provider:
             # Decode value (int128 — need to handle sign)
             raw_value = int(result[0:64], 16)
             if raw_value >= (1 << 127):
-                raw_value -= (1 << 128)  # Two's complement for negative
+                raw_value -= 1 << 128  # Two's complement for negative
 
             decimals = int(result[64:128], 16)
 
@@ -421,7 +432,10 @@ class ERC8004Provider:
             return None
 
     async def get_all_feedback(
-        self, agent_id: int, network: str, max_signals: int = 200,
+        self,
+        agent_id: int,
+        network: str,
+        max_signals: int = 200,
     ) -> list[FeedbackSignal]:
         """
         Fetch all feedback signals for an agent.
@@ -454,8 +468,12 @@ class ERC8004Provider:
     # ─── Reputation Registry — Optimized Bulk Reads ──────────────────
 
     async def get_reputation_summary(
-        self, agent_id: int, client_addresses: list[str], network: str,
-        tag1: str = "", tag2: str = "",
+        self,
+        agent_id: int,
+        client_addresses: list[str],
+        network: str,
+        tag1: str = "",
+        tag2: str = "",
     ) -> tuple[int, int, int] | None:
         """
         Get aggregated reputation summary in a single RPC call.
@@ -542,7 +560,7 @@ class ERC8004Provider:
             count = int(result[0:64], 16)
             raw_value = int(result[64:128], 16)
             if raw_value >= (1 << 127):
-                raw_value -= (1 << 128)
+                raw_value -= 1 << 128
             decimals = int(result[128:192], 16)
             return (count, raw_value, decimals)
         except (ValueError, IndexError) as e:
@@ -550,7 +568,9 @@ class ERC8004Provider:
             return None
 
     async def get_all_feedback_bulk(
-        self, agent_id: int, network: str,
+        self,
+        agent_id: int,
+        network: str,
         client_addresses: list[str] | None = None,
         include_revoked: bool = False,
         max_signals: int = 200,
@@ -583,7 +603,7 @@ class ERC8004Provider:
 
         try:
             # Build minimum calldata with empty filters
-            selector = _FUNCTION_SELECTORS["readAllFeedback(uint256,address[],string,string,bool)"]
+            _FUNCTION_SELECTORS["readAllFeedback(uint256,address[],string,string,bool)"]
 
             # This is a complex ABI encoding with multiple dynamic params.
             # For reliability, fall back to iterative approach if encoding
@@ -606,9 +626,8 @@ class ERC8004Provider:
                     if len(signals) >= max_signals:
                         break
                     signal = await self.read_feedback(agent_id, client, idx, network)
-                    if signal:
-                        if include_revoked or not signal.is_revoked:
-                            signals.append(signal)
+                    if signal and (include_revoked or not signal.is_revoked):
+                        signals.append(signal)
 
             return signals
 
@@ -622,7 +641,9 @@ class ERC8004Provider:
     # Until then, they'll return None / empty since addresses aren't configured.
 
     async def get_validation_status(
-        self, request_hash: str, network: str,
+        self,
+        request_hash: str,
+        network: str,
     ) -> dict | None:
         """
         Read getValidationStatus(bytes32 requestHash) →
@@ -635,8 +656,7 @@ class ERC8004Provider:
 
         selector = _FUNCTION_SELECTORS["getValidationStatus(bytes32)"]
         # Pad request_hash to 32 bytes
-        hash_clean = request_hash.lower().replace("0x", "")
-        data = f"0x{selector}{hash_clean:>064}"
+        data = f"0x{selector}{self._encode_bytes32(request_hash)}"
         result = await self._eth_call(registry, data)
         if not result or len(result) < 384:
             return None
@@ -662,7 +682,9 @@ class ERC8004Provider:
             return None
 
     async def get_agent_validations(
-        self, agent_id: int, network: str,
+        self,
+        agent_id: int,
+        network: str,
     ) -> list[str]:
         """
         Read getAgentValidations(uint256 agentId) → bytes32[] requestHashes.
@@ -679,20 +701,22 @@ class ERC8004Provider:
 
         try:
             offset = int(result[0:64], 16) * 2
-            count = int(result[offset:offset + 64], 16)
+            count = int(result[offset : offset + 64], 16)
             hashes = []
             pos = offset + 64
             for _ in range(min(count, 500)):  # Cap to prevent DoS
                 if pos + 64 > len(result):
                     break
-                hashes.append("0x" + result[pos:pos + 64])
+                hashes.append("0x" + result[pos : pos + 64])
                 pos += 64
             return hashes
         except (ValueError, IndexError):
             return []
 
     async def get_validator_requests(
-        self, validator_address: str, network: str,
+        self,
+        validator_address: str,
+        network: str,
     ) -> list[str]:
         """
         Read getValidatorRequests(address validatorAddress) → bytes32[] requestHashes.
@@ -709,13 +733,13 @@ class ERC8004Provider:
 
         try:
             offset = int(result[0:64], 16) * 2
-            count = int(result[offset:offset + 64], 16)
+            count = int(result[offset : offset + 64], 16)
             hashes = []
             pos = offset + 64
             for _ in range(min(count, 500)):  # Cap to prevent DoS
                 if pos + 64 > len(result):
                     break
-                hashes.append("0x" + result[pos:pos + 64])
+                hashes.append("0x" + result[pos : pos + 64])
                 pos += 64
             return hashes
         except (ValueError, IndexError):
@@ -736,7 +760,6 @@ _FUNCTION_SELECTORS: dict[str, str] = {
     "tokenURI(uint256)": "c87b56dd",
     "balanceOf(address)": "70a08231",
     "tokenOfOwnerByIndex(address,uint256)": "2f745c59",
-
     # ─── Identity Registry (ERC-8004 extensions) ───
     "register()": "1aa3a008",
     "register(string)": "f2c298be",
@@ -747,7 +770,6 @@ _FUNCTION_SELECTORS: dict[str, str] = {
     "getAgentWallet(uint256)": "00339509",
     "setAgentWallet(uint256,address,uint256,bytes)": "2d1ef5ae",
     "unsetAgentWallet(uint256)": "3fddcf19",
-
     # ─── Reputation Registry ───
     "getIdentityRegistry()": "bc4d861b",
     "giveFeedback(uint256,int128,uint8,string,string,string,string,bytes32)": "3c036a7e",
@@ -759,7 +781,6 @@ _FUNCTION_SELECTORS: dict[str, str] = {
     "getResponseCount(uint256,address,uint64,address[])": "6e04cacd",
     "getClients(uint256)": "42dd519c",
     "getLastIndex(uint256,address)": "f2d81759",
-
     # ─── Validation Registry ───
     "validationRequest(address,uint256,string,bytes32)": "aaf400c4",
     "validationResponse(bytes32,uint8,string,bytes32,string)": "3d659a96",

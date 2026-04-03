@@ -7,10 +7,11 @@ Uses StorageBackend for persistence.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING
-from omniclaw.events import event_emitter
 
+from omniclaw.events import event_emitter
 from omniclaw.guards.base import Guard, GuardResult, PaymentContext
 
 if TYPE_CHECKING:
@@ -122,6 +123,7 @@ class RateLimitGuard(Guard):
             return
         import json
 
+        wallet_id = "<unknown>"
         try:
             data = json.loads(token)
             if data.get("v") != 2:
@@ -132,8 +134,12 @@ class RateLimitGuard(Guard):
             window_keys = self._get_window_keys(wallet_id, ts)
             for key in window_keys.values():
                 await self._storage.atomic_add("guard_state", key, "-1")
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger(__name__).error(
+                f"RateLimitGuard.release() failed for wallet {wallet_id}: {exc}. "
+                f"Rate limit counter may be permanently inflated.",
+                exc_info=True,
+            )
 
     # Legacy / Read Helpers
     async def get_minute_count(self, wallet_id: str) -> int:
@@ -163,8 +169,14 @@ class RateLimitGuard(Guard):
             limit = getattr(self, f"_max_per_{limit_type}")
             current = await self._get_count(key)
             if current >= limit:
-                event_emitter.emit_background("guard.rate_limit_hit", context.wallet_id, payload={"limit_type": limit_type, "current": current, "limit": limit})
-                event_emitter.emit_background("payment.guard_evaluated", context.wallet_id, payload={"result": "FAIL"})
+                event_emitter.emit_background(
+                    "guard.rate_limit_hit",
+                    context.wallet_id,
+                    payload={"limit_type": limit_type, "current": current, "limit": limit},
+                )
+                event_emitter.emit_background(
+                    "payment.guard_evaluated", context.wallet_id, payload={"result": "FAIL"}
+                )
                 return GuardResult(
                     allowed=False,
                     reason=f"Rate limit exceeded ({limit_type}): {current}/{limit}",
@@ -172,7 +184,9 @@ class RateLimitGuard(Guard):
                     metadata={"limit_type": limit_type, "current": current, "limit": limit},
                 )
 
-        event_emitter.emit_background("payment.guard_evaluated", context.wallet_id, payload={"result": "PASS"})
+        event_emitter.emit_background(
+            "payment.guard_evaluated", context.wallet_id, payload={"result": "PASS"}
+        )
         return GuardResult(allowed=True, guard_name=self.name)
 
     async def record_payment(self, wallet_id: str) -> None:

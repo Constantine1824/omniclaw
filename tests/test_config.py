@@ -55,13 +55,14 @@ class TestConfig:
                 entity_secret="test_secret",
             )
 
-    def test_missing_entity_secret_raises(self) -> None:
-        """Test missing entity secret raises ValueError."""
-        with pytest.raises(ValueError, match="entity_secret is required"):
-            Config(
-                circle_api_key="test_key",
-                entity_secret="",
-            )
+    def test_missing_entity_secret_warns(self) -> None:
+        """Test missing entity secret logs warning (no longer required)."""
+        # entity_secret is now optional — Config should NOT raise
+        config = Config(
+            circle_api_key="test_key",
+            entity_secret="",
+        )
+        assert config.entity_secret == ""
 
     def test_from_env(self) -> None:
         """Test loading config from environment variables."""
@@ -70,6 +71,8 @@ class TestConfig:
             "ENTITY_SECRET": "env_entity_secret",
             "OMNICLAW_NETWORK": "ARC-TESTNET",
             "OMNICLAW_DEFAULT_WALLET": "wallet-xyz",
+            "OMNICLAW_STRICT_SETTLEMENT": "true",
+            "OMNICLAW_AUTO_RECONCILE_PENDING_SETTLEMENTS": "true",
         }
 
         with patch.dict(os.environ, env_vars, clear=False):
@@ -79,6 +82,8 @@ class TestConfig:
         assert config.entity_secret == "env_entity_secret"
         assert config.network == Network.ARC_TESTNET
         assert config.default_wallet_id == "wallet-xyz"
+        assert config.payment_strict_settlement is True
+        assert config.auto_reconcile_pending_settlements is True
 
     def test_from_env_missing_api_key_raises(self) -> None:
         """Test from_env raises when API key not set."""
@@ -92,17 +97,16 @@ class TestConfig:
         ):
             Config.from_env()
 
-    def test_from_env_missing_entity_secret_raises(self) -> None:
-        """Test from_env raises when entity secret not set."""
+    def test_from_env_missing_entity_secret_warns(self) -> None:
+        """Test from_env with missing entity secret logs warning (no longer required)."""
         env_vars = {
             "CIRCLE_API_KEY": "test_key",
         }
 
-        with (
-            patch.dict(os.environ, env_vars, clear=True),
-            pytest.raises(ValueError, match="ENTITY_SECRET"),
-        ):
-            Config.from_env()
+        with patch.dict(os.environ, env_vars, clear=True):
+            config = Config.from_env()
+        assert config.entity_secret == ""
+        assert config.circle_api_key == "test_key"
 
     def test_from_env_with_overrides(self) -> None:
         """Test from_env with override values."""
@@ -185,6 +189,6 @@ class TestConfig:
             entity_secret="test_secret",
         )
 
-        assert config.request_timeout == 30.0
+        assert config.request_timeout == 60.0
         assert config.transaction_poll_interval == 2.0
         assert config.transaction_poll_timeout == 120.0

@@ -8,14 +8,16 @@ import os
 import tempfile
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from omniclaw.client import GuardManager, OmniClaw
+from omniclaw.core.exceptions import ConfigurationError
 from omniclaw.core.types import (
     Network,
     PaymentMethod,
+    PaymentResult,
     PaymentStatus,
 )
 from omniclaw.guards.budget import BudgetGuard
@@ -31,6 +33,7 @@ def mock_env():
         {
             "CIRCLE_API_KEY": "test_api_key",
             "ENTITY_SECRET": "test_secret",
+            "OMNICLAW_STORAGE_BACKEND": "memory",
         },
     ):
         yield
@@ -83,6 +86,36 @@ class TestClientInitialization:
 
                 client = OmniClaw(network=Network.ARC_TESTNET)
                 assert client.config.entity_secret == "managed_secret"
+
+    def test_init_production_requires_hardening_envs(self):
+        with patch.dict(
+            os.environ,
+            {
+                "CIRCLE_API_KEY": "prod_api_key",
+                "ENTITY_SECRET": "prod_entity_secret",
+                "OMNICLAW_ENV": "production",
+            },
+            clear=True,
+        ), pytest.raises(
+            ConfigurationError, match="Missing required production environment variables"
+        ):
+            OmniClaw(network=Network.ARC_TESTNET)
+
+    def test_init_production_requires_strict_settlement(self):
+        with patch.dict(
+            os.environ,
+            {
+                "CIRCLE_API_KEY": "prod_api_key",
+                "ENTITY_SECRET": "prod_entity_secret",
+                "OMNICLAW_ENV": "production",
+                "OMNICLAW_SELLER_NONCE_REDIS_URL": "redis://localhost:6379/0",
+                "OMNICLAW_WEBHOOK_VERIFICATION_KEY": "dummy-key",
+                "OMNICLAW_WEBHOOK_DEDUP_DB_PATH": "/tmp/omniclaw_webhook_dedup.sqlite3",
+                "OMNICLAW_STRICT_SETTLEMENT": "false",
+            },
+            clear=True,
+        ), pytest.raises(ConfigurationError, match="OMNICLAW_STRICT_SETTLEMENT must be true"):
+            OmniClaw(network=Network.ARC_TESTNET)
 
 
 class TestGuardManager:
@@ -244,7 +277,7 @@ class TestSimulate:
     @pytest.mark.asyncio
     async def test_simulate_blocked_by_guard(self, client):
         client._wallet_service.get_usdc_balance_amount = lambda wid: Decimal("100.00")
-        
+
         # Add guard for this wallet
         await client.guards.add_guard(
             "wallet-123",
@@ -314,3 +347,124 @@ class TestPayRequiresWallet:
                 recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
                 amount=Decimal("10.00"),
             )
+
+
+class TestPayIdempotency:
+    @pytest.mark.asyncio
+    async def test_pay_derives_deterministic_idempotency_key(self, client):
+        from unittest.mock import AsyncMock
+
+        captured_keys: list[str] = []
+
+        async def _mock_pay(**kwargs):
+            captured_keys.append(kwargs["idempotency_key"])
+            return PaymentResult(
+                success=True,
+                transaction_id="tx-1",
+                blockchain_tx="0xabc",
+                amount=Decimal("1.00"),
+                recipient=kwargs["recipient"],
+                method=PaymentMethod.TRANSFER,
+                status=PaymentStatus.COMPLETED,
+            )
+
+        client._wallet_service.get_usdc_balance_amount = lambda _wid: Decimal("100.00")
+        client._router.pay = AsyncMock(side_effect=_mock_pay)
+
+        await client.pay(
+            wallet_id="wallet-123",
+            recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+            amount=Decimal("1.00"),
+            skip_guards=True,
+        )
+        await client.pay(
+            wallet_id="wallet-123",
+            recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+            amount=Decimal("1.00"),
+            skip_guards=True,
+        )
+
+        assert len(captured_keys) == 2
+        assert captured_keys[0] == captured_keys[1]
+
+
+class TestSettlementReconciliation:
+    @pytest.mark.asyncio
+    async def test_finalize_pending_settlement_marks_completed(self, client):
+        from omniclaw.ledger import LedgerEntry, LedgerEntryStatus
+
+        entry = LedgerEntry(
+            wallet_id="wallet-123",
+            recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+            amount=Decimal("1.00"),
+            status=LedgerEntryStatus.PENDING,
+            metadata={"settlement_final": False},
+        )
+        await client.ledger.record(entry)
+
+        updated = await client.finalize_pending_settlement(
+            entry.id,
+            settled=True,
+            settlement_tx_hash="0xminttx",
+            reason="Mint confirmed",
+        )
+        assert updated.status == LedgerEntryStatus.COMPLETED
+        assert updated.metadata["settlement_final"] is True
+        assert updated.tx_hash == "0xminttx"
+
+    @pytest.mark.asyncio
+    async def test_list_pending_settlements_filters_by_status(self, client):
+        from omniclaw.ledger import LedgerEntry, LedgerEntryStatus
+
+        await client.ledger.record(
+            LedgerEntry(
+                wallet_id="wallet-123",
+                recipient="0x1111111111111111111111111111111111111111",
+                amount=Decimal("1.00"),
+                status=LedgerEntryStatus.PENDING,
+            )
+        )
+        await client.ledger.record(
+            LedgerEntry(
+                wallet_id="wallet-123",
+                recipient="0x2222222222222222222222222222222222222222",
+                amount=Decimal("1.00"),
+                status=LedgerEntryStatus.COMPLETED,
+            )
+        )
+
+        pending = await client.list_pending_settlements(wallet_id="wallet-123")
+        assert all(p.status == LedgerEntryStatus.PENDING for p in pending)
+
+    @pytest.mark.asyncio
+    async def test_reconcile_pending_settlements_finalizes_completed(self, client):
+        from omniclaw.ledger import LedgerEntry, LedgerEntryStatus
+
+        entry = LedgerEntry(
+            wallet_id="wallet-123",
+            recipient="0x3333333333333333333333333333333333333333",
+            amount=Decimal("2.00"),
+            status=LedgerEntryStatus.PENDING,
+            metadata={"transaction_id": "tx-123"},
+        )
+        await client.ledger.record(entry)
+
+        tx_info = MagicMock()
+        tx_info.state = "COMPLETE"
+        tx_info.tx_hash = "0xcomplete"
+        tx_info.fee_level = None
+
+        circle = MagicMock()
+        circle.get_transaction.return_value = tx_info
+        client._wallet_service = MagicMock()
+        client._wallet_service._circle = circle
+
+        stats = await client.reconcile_pending_settlements(wallet_id="wallet-123")
+
+        assert stats["processed"] >= 1
+        assert stats["finalized"] >= 1
+
+        updated = await client.ledger.get(entry.id)
+        assert updated is not None
+        assert updated.status == LedgerEntryStatus.COMPLETED
+        assert updated.metadata.get("settlement_final") is True

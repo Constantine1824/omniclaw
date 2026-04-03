@@ -74,6 +74,39 @@ class Network(str, Enum):
 
     @classmethod
     def from_string(cls, value: str) -> "Network":
+        # Support CAIP-2 format (eip155:80002, etc.)
+        if ":" in value:
+            caip2_map = {
+                "eip155:1": cls.ETH,
+                "eip155:11155111": cls.ETH_SEPOLIA,
+                "eip155:43114": cls.AVAX,
+                "eip155:43113": cls.AVAX_FUJI,
+                "eip155:137": cls.MATIC,
+                "eip155:80002": cls.MATIC_AMOY,
+                "eip155:42161": cls.ARB,
+                "eip155:421614": cls.ARB_SEPOLIA,
+                "eip155:8453": cls.BASE,
+                "eip155:84532": cls.BASE_SEPOLIA,
+                "eip155:10": cls.OP,
+                "eip155:11155420": cls.OP_SEPOLIA,
+                "eip155:130": cls.UNI,
+                "eip155:1301": cls.UNI_SEPOLIA,
+                "eip155:5042002": cls.ARC_TESTNET,
+                "solana:mainnet": cls.SOL,
+                "solana:devnet": cls.SOL_DEVNET,
+                "near:mainnet": cls.NEAR,
+                "near:testnet": cls.NEAR_TESTNET,
+                "aptos:mainnet": cls.APTOS,
+                "aptos:testnet": cls.APTOS_TESTNET,
+            }
+            normalized = value.lower().strip()
+            if normalized in caip2_map:
+                return caip2_map[normalized]
+            # Unknown CAIP-2 network - fall back to testnet/mainnet by convention
+            if any(t in normalized for t in ("testnet", "sepolia", "fuji", "devnet", "amoy")):
+                return cls.EVM_TESTNET
+            return cls.EVM
+
         value_upper = value.upper().replace("_", "-")
         for member in cls:
             if member.value == value_upper:
@@ -102,18 +135,18 @@ class Network(str, Enum):
 def normalize_network(network: Network | str | None) -> Network | None:
     """
     Normalize a network value to a Network enum.
-    
+
     Handles:
     - None -> None
     - Network enum -> Network enum (unchanged)
     - str -> Network enum (converted)
-    
+
     Args:
         network: Network enum, string, or None
-        
+
     Returns:
         Network enum or None
-        
+
     Raises:
         ValueError: If string cannot be converted to Network
     """
@@ -122,6 +155,43 @@ def normalize_network(network: Network | str | None) -> Network | None:
     if isinstance(network, Network):
         return network
     return Network.from_string(str(network))
+
+
+def network_to_caip2(network: Network | str | None) -> str | None:
+    """
+    Convert a Network (or network string) to CAIP-2 format for Gateway nanopayments.
+
+    Returns None when the network cannot be mapped.
+    """
+    if network is None:
+        return None
+    if isinstance(network, str):
+        normalized = network.strip()
+        if ":" in normalized:
+            return normalized.lower()
+        try:
+            network = Network.from_string(normalized)
+        except Exception:
+            return None
+
+    caip2_map = {
+        Network.ETH: "eip155:1",
+        Network.ETH_SEPOLIA: "eip155:11155111",
+        Network.AVAX: "eip155:43114",
+        Network.AVAX_FUJI: "eip155:43113",
+        Network.MATIC: "eip155:137",
+        Network.MATIC_AMOY: "eip155:80002",
+        Network.ARB: "eip155:42161",
+        Network.ARB_SEPOLIA: "eip155:421614",
+        Network.BASE: "eip155:8453",
+        Network.BASE_SEPOLIA: "eip155:84532",
+        Network.OP: "eip155:10",
+        Network.OP_SEPOLIA: "eip155:11155420",
+        Network.UNI: "eip155:130",
+        Network.UNI_SEPOLIA: "eip155:1301",
+        Network.ARC_TESTNET: "eip155:5042002",
+    }
+    return caip2_map.get(network)
 
 
 class PaymentStrategy(str, Enum):
@@ -138,11 +208,16 @@ class PaymentMethod(str, Enum):
     X402 = "x402"  # HTTP 402 protocol payment
     TRANSFER = "transfer"  # Direct wallet-to-wallet transfer
     CROSSCHAIN = "crosschain"  # Cross-chain transfer (Gateway/CCTP/Bridge Kit)
+    NANOPAYMENT = "nanopayment"  # EIP-3009 Circle Gateway gasless micro-payments
 
 
 class PaymentStatus(str, Enum):
     """Payment transaction status."""
 
+    AUTHORIZED = "authorized"  # Authorization created but settlement not started
+    PENDING_SETTLEMENT = "pending_settlement"  # Submitted and awaiting final settlement
+    SETTLED = "settled"  # Irreversible settlement confirmed
+    FAILED_FINAL = "failed_final"  # Irreversible terminal failure
     PENDING = "pending"  # Payment initiated but not yet processing
     PROCESSING = "processing"  # Payment is being processed on-chain
     COMPLETED = "completed"  # Payment successfully completed
@@ -256,10 +331,10 @@ class WalletSetInfo:
     """Wallet set information from Circle API."""
 
     id: str
-    name: str | None
     custody_type: CustodyType
-    create_date: datetime
-    update_date: datetime
+    name: str | None = None
+    create_date: datetime | None = None
+    update_date: datetime | None = None
 
     @classmethod
     def from_api_response(cls, data: dict[str, Any]) -> "WalletSetInfo":
@@ -274,8 +349,8 @@ class WalletSetInfo:
 
         return cls(
             id=data["id"],
-            name=data.get("name"),
             custody_type=CustodyType(data["custodyType"]),
+            name=data.get("name"),
             create_date=parse_dt(data.get("createDate")),
             update_date=parse_dt(data.get("updateDate")),
         )
@@ -429,7 +504,9 @@ class PaymentIntent:
             "expires_at": self.expires_at.isoformat() if self.expires_at else None,
             "purpose": self.purpose,
             "cancel_reason": self.cancel_reason,
-            "reserved_amount": str(self.reserved_amount) if self.reserved_amount is not None else None,
+            "reserved_amount": str(self.reserved_amount)
+            if self.reserved_amount is not None
+            else None,
             "metadata": self.metadata,
             "client_secret": self.client_secret,
         }
@@ -449,7 +526,9 @@ class PaymentIntent:
             else None,
             purpose=data.get("purpose"),
             cancel_reason=data.get("cancel_reason"),
-            reserved_amount=Decimal(data["reserved_amount"]) if data.get("reserved_amount") else None,
+            reserved_amount=Decimal(data["reserved_amount"])
+            if data.get("reserved_amount")
+            else None,
             metadata=data.get("metadata", {}),
             client_secret=data.get("client_secret"),
         )
@@ -504,6 +583,21 @@ class BatchPaymentResult:
     failed_count: int
     results: list[PaymentResult]
     transaction_ids: list[str] = field(default_factory=list)
+
+    @property
+    def total(self) -> int:
+        """Alias for total_count for convenience."""
+        return self.total_count
+
+    @property
+    def successful(self) -> int:
+        """Alias for success_count for convenience."""
+        return self.success_count
+
+    @property
+    def failed(self) -> int:
+        """Alias for failed_count for convenience."""
+        return self.failed_count
 
 
 # Token IDs for USDC on different networks (from Circle)

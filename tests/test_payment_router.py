@@ -10,6 +10,7 @@ from omniclaw.core.types import (
     Balance,
     Network,
     PaymentMethod,
+    PaymentResult,
     PaymentStatus,
     TokenInfo,
     TransactionInfo,
@@ -34,6 +35,7 @@ def mock_config() -> Config:
 def mock_wallet_service() -> MagicMock:
     """Create mock wallet service."""
     from unittest.mock import AsyncMock
+
     service = MagicMock()
     service.transfer = AsyncMock()
     service.execute_contract = AsyncMock()
@@ -196,6 +198,65 @@ class TestTransferAdapterExecute:
 
         assert result.success is False
         assert "Insufficient balance" in str(result.error)
+
+    async def test_execute_derives_deterministic_idempotency_key(
+        self,
+        transfer_adapter: TransferAdapter,
+        mock_wallet_service: MagicMock,
+    ) -> None:
+        """Missing idempotency_key should be deterministically derived."""
+        mock_wallet_service.transfer.return_value = TransferResult(
+            success=True,
+            transaction=TransactionInfo(
+                id="tx-123",
+                state=TransactionState.COMPLETE,
+                tx_hash="0xabc...",
+            ),
+            tx_hash="0xabc...",
+        )
+
+        await transfer_adapter.execute(
+            wallet_id="wallet-123",
+            recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+            amount=Decimal("10.00"),
+            purpose="deterministic",
+        )
+        first = mock_wallet_service.transfer.await_args.kwargs["idempotency_key"]
+
+        await transfer_adapter.execute(
+            wallet_id="wallet-123",
+            recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+            amount=Decimal("10.00"),
+            purpose="deterministic",
+        )
+        second = mock_wallet_service.transfer.await_args.kwargs["idempotency_key"]
+
+        assert first == second
+
+    async def test_execute_pending_transfer_reports_pending_settlement(
+        self,
+        transfer_adapter: TransferAdapter,
+        mock_wallet_service: MagicMock,
+    ) -> None:
+        """Non-final provider state should be in-flight, not irreversible success."""
+        mock_wallet_service.transfer.return_value = TransferResult(
+            success=True,
+            transaction=TransactionInfo(
+                id="tx-124",
+                state=TransactionState.PENDING,
+                tx_hash="0xpending",
+            ),
+            tx_hash="0xpending",
+        )
+
+        result = await transfer_adapter.execute(
+            wallet_id="wallet-123",
+            recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+            amount=Decimal("10.00"),
+        )
+
+        assert result.success is False
+        assert result.status == PaymentStatus.PENDING_SETTLEMENT
 
 
 @pytest.mark.asyncio
@@ -363,6 +424,65 @@ class TestPaymentRouterPay:
 
         assert "BudgetGuard" in result.guards_passed
         assert "RateLimitGuard" in result.guards_passed
+
+    async def test_pay_treats_pending_settlement_as_accepted(self, mock_config: Config) -> None:
+        """Pending settlement should not be treated as adapter failure."""
+        mock_wallet_service = MagicMock()
+        mock_wallet = MagicMock()
+        mock_wallet.blockchain = "ARC-TESTNET"
+        mock_wallet_service.get_wallet.return_value = mock_wallet
+        router = PaymentRouter(mock_config, mock_wallet_service)
+
+        class PendingAdapter:
+            method = PaymentMethod.CROSSCHAIN
+
+            def supports(self, recipient, source_network=None, destination_chain=None, **kwargs):
+                return True
+
+            async def execute(self, **kwargs):
+                return PaymentResult(
+                    success=False,
+                    transaction_id="tx-pending",
+                    blockchain_tx="0xburn",
+                    amount=Decimal("1.00"),
+                    recipient=kwargs["recipient"],
+                    method=PaymentMethod.CROSSCHAIN,
+                    status=PaymentStatus.PENDING_SETTLEMENT,
+                )
+
+            def get_priority(self):
+                return 10
+
+        class FallbackAdapter:
+            method = PaymentMethod.TRANSFER
+
+            def supports(self, recipient, source_network=None, destination_chain=None, **kwargs):
+                return True
+
+            async def execute(self, **kwargs):
+                return PaymentResult(
+                    success=True,
+                    transaction_id="tx-fallback",
+                    blockchain_tx="0xfallback",
+                    amount=Decimal("1.00"),
+                    recipient=kwargs["recipient"],
+                    method=PaymentMethod.TRANSFER,
+                    status=PaymentStatus.SETTLED,
+                )
+
+            def get_priority(self):
+                return 20
+
+        router.register_adapter(PendingAdapter())
+        router.register_adapter(FallbackAdapter())
+
+        result = await router.pay(
+            wallet_id="wallet-123",
+            recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+            amount="1.00",
+        )
+        assert result.transaction_id == "tx-pending"
+        assert result.status == PaymentStatus.PENDING_SETTLEMENT
 
 
 @pytest.mark.asyncio

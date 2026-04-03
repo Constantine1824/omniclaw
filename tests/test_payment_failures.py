@@ -13,6 +13,7 @@ from omniclaw.core.types import (
     Network,
     PaymentResult,
     PaymentStatus,
+    PaymentStrategy,
 )
 from omniclaw.payment.batch import BatchProcessor
 from omniclaw.payment.router import PaymentRouter
@@ -40,7 +41,7 @@ def client_mocked():
     client._wallet_service.get_usdc_balance.return_value = balance
     client._wallet_service.get_usdc_balance.return_value = balance
     client._wallet_service.get_usdc_balance_amount.return_value = Decimal("1000000.00")
-    
+
     # Configure get_wallet mock to return an object with a valid blockchain string
     mock_wallet = MagicMock()
     mock_wallet.blockchain = "ARC-TESTNET"
@@ -170,3 +171,46 @@ async def test_batch_pay_partial_failure(client_mocked):
     assert result.success_count == 2
     assert result.failed_count == 1
     assert len(result.results) == 3
+
+
+@pytest.mark.asyncio
+async def test_post_transfer_guard_commit_failure_does_not_queue_retry(client_mocked):
+    """Guard commit failure after tx submission must not trigger queue/retry semantics."""
+
+    class _FailingGuardChain:
+        def __iter__(self):
+            return iter([])
+
+        async def reserve(self, context):
+            return [("budget", "tok")]
+
+        async def commit(self, tokens):
+            raise RuntimeError("commit backend down")
+
+        async def release(self, tokens):
+            return None
+
+    client_mocked._guard_manager.get_guard_chain = AsyncMock(return_value=_FailingGuardChain())
+    client_mocked._router.pay = AsyncMock(
+        return_value=PaymentResult(
+            success=True,
+            transaction_id="tx-commit-test",
+            blockchain_tx="0xcommit",
+            amount=Decimal("1.00"),
+            recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+            method="transfer",
+            status=PaymentStatus.COMPLETED,
+        )
+    )
+    client_mocked._queue_payment = AsyncMock()
+
+    result = await client_mocked.pay(
+        wallet_id="wallet-123",
+        recipient="0x742d35Cc6634C0532925a3b844Bc9e7595f5e4a0",
+        amount=Decimal("1.00"),
+        strategy=PaymentStrategy.QUEUE_BACKGROUND,
+    )
+
+    assert result.success is True
+    assert "post_commit_error" in (result.metadata or {})
+    client_mocked._queue_payment.assert_not_called()

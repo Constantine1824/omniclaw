@@ -1,6 +1,6 @@
 # OmniClaw API Reference
 
-This is the public SDK reference for the current Python package. It focuses on the API surface users are expected to call directly.
+This is the public API reference for the Financial Policy Engine. It focuses on the API surface users are expected to call directly.
 
 ## Top-Level Imports
 
@@ -24,8 +24,14 @@ Required:
 
 ```env
 CIRCLE_API_KEY=...
+OMNICLAW_NETWORK=ETH-SEPOLIA  # or ARC-TESTNET
+# Direct-key mode (recommended for agents / nanopayments)
+OMNICLAW_PRIVATE_KEY=0x...
+```
+
+If you are using Circle developer-controlled wallets directly, provide:
+```
 ENTITY_SECRET=...
-OMNICLAW_NETWORK=ARC-TESTNET
 ```
 
 Optional:
@@ -52,19 +58,19 @@ Defined in [onboarding.py](../src/omniclaw/onboarding.py).
 
 ### `quick_setup(api_key, env_path=".env", network="ARC-TESTNET")`
 
-One-time onboarding helper that generates and registers an entity secret and writes an env file.
+One-time onboarding helper that generates and registers an entity secret and writes an env file (optional).
 
-### `generate_entity_secret()`
+### `generate_entity_secret()` (optional)
 
-Returns a 64-character hex entity secret.
+Returns a 64-character hex entity secret (manual setup only).
 
-### `register_entity_secret(api_key, entity_secret, recovery_dir=None)`
+### `register_entity_secret(api_key, entity_secret, recovery_dir=None)` (optional)
 
-Registers an entity secret with Circle and downloads the recovery file.
+Registers an entity secret with Circle and downloads the recovery file (manual setup only).
 
-### `create_env_file(api_key, entity_secret, env_path=".env", network="ARC-TESTNET", overwrite=False)`
+### `create_env_file(api_key, entity_secret, env_path=".env", network="ARC-TESTNET", overwrite=False)` (optional)
 
-Writes the basic OmniClaw env file.
+Writes the basic OmniClaw env file (manual setup only).
 
 ### `verify_setup()`
 
@@ -111,6 +117,7 @@ OmniClaw(
 - `intents`
 - `ledger`
 - `webhooks`
+- `nanopayment_adapter` — NanopaymentAdapter for buyer-side nanopayments
 
 ### Wallet Methods
 
@@ -217,6 +224,97 @@ await client.list_guards(wallet_id)
 await client.list_guards_for_set(wallet_set_id)
 ```
 
+### Nanopayments Methods
+
+Nanopayments use EIP-3009 for gas-free USDC transfers on Circle Gateway. They work alongside regular payments — micro-transactions route through the gateway while larger payments use standard transfers.
+
+#### Seller: Receiving Nanopayments
+
+```python
+# Get the GatewayMiddleware for protecting endpoints
+await client.gateway()  # -> GatewayMiddleware
+
+# Decorator factory for marking paid FastAPI routes
+client.sell(price: str)  # -> Depends() for FastAPI
+
+# Get current payment info inside a @sell() decorated route
+client.current_payment()  # -> PaymentInfo(payer, amount, network, transaction)
+```
+
+Example (FastAPI seller):
+
+```python
+from fastapi import Depends
+
+@app.get("/premium")
+async def premium(payment=Depends(omniclaw.sell("$0.001"))):
+    payment_info = omniclaw.current_payment()
+    return {"data": "paid content", "paid_by": payment_info.payer}
+```
+
+#### Buyer: Sending Nanopayments
+
+```python
+# Execute a nanopayment to a seller's address
+await client.pay(
+    wallet_id=wallet.id,
+    recipient="0xSellerAddress",
+    amount="0.001",  # Small amount - uses gateway nanopayment
+)
+# Routes to Circle Gateway nanopayment if amount < nanopayments_micro_threshold
+```
+
+#### Gateway Wallet Management
+
+```python
+# Get gateway balance
+await client.get_gateway_balance(wallet_id="wallet-id")
+# -> GatewayBalance(total, available, formatted_total, formatted_available)
+
+# Deposit USDC to gateway wallet (enables receiving nanopayments)
+await client.deposit_to_gateway(
+    wallet_id="wallet-id",
+    amount_usdc="10.00",
+)
+
+# Withdraw USDC from gateway wallet
+await client.withdraw_from_gateway(
+    wallet_id="wallet-id",
+    amount_usdc="5.00",
+    destination_chain=None,  # Optional: withdraw to another chain
+    recipient="0xDestination",  # Optional: specific recipient
+)
+
+# Configure auto-topup for gateway balance
+client.configure_nanopayments(
+    auto_topup_enabled=True,
+    auto_topup_threshold="1.00",
+    auto_topup_amount="10.00",
+    wallet_manager=gateway_wallet_manager,
+)
+```
+
+#### Agent Creation
+
+```python
+# Create an agent wallet
+agent_wallet = await client.create_agent(
+    agent_name="data-agent",
+)
+```
+
+### Nanopayments Environment Variables
+
+```env
+OMNICLAW_NANOPAYMENTS_ENABLED=true
+OMNICLAW_NANOPAYMENTS_ENVIRONMENT=testnet  # or "mainnet"
+OMNICLAW_NANOPAYMENTS_MICRO_THRESHOLD=1.00
+OMNICLAW_NANOPAYMENTS_AUTO_TOPUP=true
+OMNICLAW_NANOPAYMENTS_TOPUP_THRESHOLD=1.00
+OMNICLAW_NANOPAYMENTS_TOPUP_AMOUNT=10.00
+# Nanopayments network is derived from OMNICLAW_NETWORK (EVM chain)
+```
+
 ## `WalletService`
 
 Accessible through `client.wallet`.
@@ -287,3 +385,7 @@ Important exported exceptions:
 - `NetworkError`
 - `X402Error`
 - `ValidationError`
+- `NanopaymentNotInitializedError`
+- `InsufficientBalanceError`
+- `SettlementError`
+- `NoDefaultKeyError`

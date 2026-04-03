@@ -73,8 +73,9 @@ class WalletService:
         self._config = config
         self.__circle = circle_client
 
-        # Cache for wallet lookups
+        # Cache for wallet lookups (bounded to prevent memory leaks)
         self._wallet_cache: dict[str, WalletInfo] = {}
+        self._wallet_cache_max_size: int = 1000
 
     @property
     def _circle(self) -> CircleClient:
@@ -155,6 +156,7 @@ class WalletService:
 
         wallet = wallets[0]
         self._wallet_cache[wallet.id] = wallet
+        self._evict_cache_if_needed()
 
         return wallet
 
@@ -188,6 +190,7 @@ class WalletService:
 
         for wallet in wallets:
             self._wallet_cache[wallet.id] = wallet
+        self._evict_cache_if_needed()
 
         return wallets
 
@@ -220,16 +223,11 @@ class WalletService:
         """
         target_name = f"agent-{agent_name}"
 
-        # Check if wallet set exists
-        # Note: Optimization would be to cache this or use a find method
-        # But list_wallet_sets is typically fast enough for setup
-        existing_sets = self.list_wallet_sets()
-        wallet_set = next((s for s in existing_sets if s.name == target_name), None)
+        # 10/10 IDEMPOTENCY: CircleClient now uses deterministic UUIDs based on names.
+        # This means create_wallet_set will return the EXISTING set if it was already created.
+        wallet_set = self.create_wallet_set(name=target_name)
 
-        if not wallet_set:
-            wallet_set = self.create_wallet_set(name=target_name)
-
-        # Create wallet(s)
+        # Create wallet(s) - also idempotent via blockchain+set name
         if count == 1:
             wallet = self.create_wallet(wallet_set_id=wallet_set.id, blockchain=blockchain)
             return wallet_set, wallet
@@ -238,8 +236,6 @@ class WalletService:
                 wallet_set_id=wallet_set.id, count=count, blockchain=blockchain
             )
             return wallet_set, wallets
-
-
 
     def get_wallet(self, wallet_id: str) -> WalletInfo:
         """
@@ -535,19 +531,9 @@ class WalletService:
         """
         Get existing wallet set by name or create new one.
 
-        Args:
-            name: Wallet set name
-
-        Returns:
-            Wallet set info
+        Circle V2 does not reliably return names in searches, so we use
+        idempotent creation via Circle SDK which handles name collisions.
         """
-        # Try to find existing
-        wallet_sets = self.list_wallet_sets()
-        for ws in wallet_sets:
-            if ws.name == name:
-                return ws
-
-        # Create new
         return self.create_wallet_set(name)
 
     def setup_agent_wallet(
@@ -567,16 +553,23 @@ class WalletService:
         Returns:
             Tuple of (wallet_set, wallet)
         """
-        wallet_set = self.create_wallet_set(agent_name)
-        wallet = self.create_wallet(
-            wallet_set_id=wallet_set.id,
-            blockchain=blockchain,
+        # Simply use the underlying create_agent_wallet logic for consistency
+        wallet_set, wallet_or_list = self.create_agent_wallet(
+            agent_name=agent_name, blockchain=blockchain, count=1
         )
 
-        return wallet_set, wallet
-
-
+        # We know it's a single wallet because count=1
+        return wallet_set, wallet_or_list  # type: ignore
 
     def clear_cache(self) -> None:
         """Clear the wallet cache."""
         self._wallet_cache.clear()
+
+    def _evict_cache_if_needed(self) -> None:
+        """Evict oldest entries if cache exceeds max size."""
+        if len(self._wallet_cache) > self._wallet_cache_max_size:
+            # Remove oldest entries (first inserted)
+            excess = len(self._wallet_cache) - self._wallet_cache_max_size + 100
+            keys_to_remove = list(self._wallet_cache.keys())[:excess]
+            for key in keys_to_remove:
+                del self._wallet_cache[key]

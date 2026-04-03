@@ -26,7 +26,7 @@ class Config:
     """SDK configuration."""
 
     circle_api_key: str
-    entity_secret: str
+    entity_secret: str = ""
     network: Network = Network.ETH
     storage_backend: str = "memory"
     redis_url: str | None = None
@@ -47,14 +47,14 @@ class Config:
     gateway_api_url: str = "https://gateway-api-testnet.circle.com/v1"
 
     # Timeouts (seconds)
-    request_timeout: float = 30.0
+    request_timeout: float = 60.0
     transaction_poll_interval: float = 2.0
     transaction_poll_timeout: float = 120.0
 
     # Environment & Logging
-    # log_level is already defined above
+    # log_level is already defined below
     env: str = "development"
-    
+
     # Wallet defaults
     default_wallet_id: str | None = None
 
@@ -67,15 +67,51 @@ class Config:
     confirm_always: bool = False
     confirm_threshold: str | None = None
 
+    # =====================================================================
+    # Nanopayments (EIP-3009 Circle Gateway batched settlement)
+    # =====================================================================
+    nanopayments_enabled: bool = True
+    """Enable nanopayments (EIP-3009 batched USDC micro-payments)."""
+
+    nanopayments_environment: str = "testnet"
+    """Circle Gateway environment: 'testnet' or 'mainnet'."""
+
+    nanopayments_auto_topup: bool = True
+    """Automatically deposit to Gateway when balance is low."""
+
+    nanopayments_topup_threshold: str = "1.00"
+    """Auto-topup threshold in USDC decimal (e.g. '1.00')."""
+
+    nanopayments_topup_amount: str = "10.00"
+    """Amount deposited when auto-topup triggers."""
+
+    nanopayments_micro_threshold: str = "1.00"
+    """Amount below which nanopayments are used instead of standard transfer."""
+
+    nanopayments_private_key: str | None = None
+    """Raw EOA private key for direct nanopayment signing (no vault needed)."""
+
+    payment_strict_settlement: bool = True
+    """If true, success=True is emitted only for irreversible settlement."""
+
+    auto_reconcile_pending_settlements: bool = False
+    """If true, opportunistically reconcile pending settlements during payment operations."""
+
     def __post_init__(self) -> None:
         if not self.circle_api_key:
             raise ValueError("circle_api_key is required")
-        if not self.entity_secret:
-            raise ValueError("entity_secret is required")
+        if not self.entity_secret and not self.nanopayments_private_key:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Neither entity_secret nor nanopayments_private_key is set. "
+                "Nanopayment signing will not be available."
+            )
 
     @classmethod
     def from_env(cls, **overrides: Any) -> Config:
         """Load configuration from environment variables."""
+
         def override_or_env(name: str, env_name: str, default: Any = None) -> Any:
             if name in overrides:
                 return overrides[name]
@@ -84,8 +120,11 @@ class Config:
         circle_api_key = override_or_env("circle_api_key", "CIRCLE_API_KEY") or _get_env_var(
             "CIRCLE_API_KEY", required=True
         )
-        entity_secret = override_or_env("entity_secret", "ENTITY_SECRET") or _get_env_var(
-            "ENTITY_SECRET", required=True
+        entity_secret = override_or_env("entity_secret", "ENTITY_SECRET", default="")
+
+        # Direct private key for nanopayments
+        nanopayments_private_key = override_or_env(
+            "nanopayments_private_key", "OMNICLAW_PRIVATE_KEY"
         )
 
         # Parse network from environment
@@ -98,6 +137,14 @@ class Config:
 
         env = override_or_env("env", "OMNICLAW_ENV", "development")
         rpc_url = override_or_env("rpc_url", "OMNICLAW_RPC_URL")
+
+        storage_backend = override_or_env("storage_backend", "OMNICLAW_STORAGE_BACKEND", "memory")
+        redis_url = override_or_env("redis_url", "OMNICLAW_REDIS_URL")
+
+        # Auto-detect nanopayments environment from OMNICLAW_ENV
+        # production/prod/mainnet → mainnet, otherwise testnet
+        is_production = env in {"prod", "production", "mainnet"}
+        nanopayments_env = "mainnet" if is_production else "testnet"
 
         # Parse guard limits
         daily_budget = override_or_env("daily_budget", "OMNICLAW_DAILY_BUDGET")
@@ -120,13 +167,43 @@ class Config:
         confirm_always = (
             overrides["confirm_always"]
             if "confirm_always" in overrides
-            else (_get_env_var("OMNICLAW_CONFIRM_ALWAYS", "false").lower() == "true")
+            else (str(_get_env_var("OMNICLAW_CONFIRM_ALWAYS", "false")).lower() == "true")
         )
         confirm_threshold = override_or_env("confirm_threshold", "OMNICLAW_CONFIRM_THRESHOLD")
 
+        # Nanopayments configuration (always enabled, env auto-detected from OMNICLAW_ENV)
+        nanopayments_enabled = True
+        nanopayments_auto_topup = (
+            overrides.get("nanopayments_auto_topup")
+            if "nanopayments_auto_topup" in overrides
+            else (str(_get_env_var("OMNICLAW_NANOPAYMENTS_AUTO_TOPUP", "true")).lower() == "true")
+        )
+        nanopayments_topup_threshold = override_or_env(
+            "nanopayments_topup_threshold", "OMNICLAW_NANOPAYMENTS_TOPUP_THRESHOLD", "1.00"
+        )
+        nanopayments_topup_amount = override_or_env(
+            "nanopayments_topup_amount", "OMNICLAW_NANOPAYMENTS_TOPUP_AMOUNT", "10.00"
+        )
+        nanopayments_micro_threshold = override_or_env(
+            "nanopayments_micro_threshold", "OMNICLAW_NANOPAYMENTS_MICRO_THRESHOLD", "1.00"
+        )
+        payment_strict_settlement = (
+            overrides.get("payment_strict_settlement")
+            if "payment_strict_settlement" in overrides
+            else (str(_get_env_var("OMNICLAW_STRICT_SETTLEMENT", "true")).lower() == "true")
+        )
+        auto_reconcile_pending_settlements = (
+            overrides.get("auto_reconcile_pending_settlements")
+            if "auto_reconcile_pending_settlements" in overrides
+            else (
+                str(_get_env_var("OMNICLAW_AUTO_RECONCILE_PENDING_SETTLEMENTS", "false")).lower()
+                == "true"
+            )
+        )
+
         return cls(
             circle_api_key=circle_api_key,  # type: ignore
-            entity_secret=entity_secret,  # type: ignore
+            entity_secret=entity_secret or "",  # type: ignore
             network=network,
             default_wallet_id=default_wallet_id,
             circle_api_base_url=overrides.get("circle_api_base_url", cls.circle_api_base_url),
@@ -149,6 +226,17 @@ class Config:
             whitelisted_recipients=whitelisted_recipients,
             confirm_always=confirm_always,
             confirm_threshold=confirm_threshold,
+            nanopayments_enabled=nanopayments_enabled,
+            nanopayments_environment=nanopayments_env,
+            nanopayments_auto_topup=nanopayments_auto_topup,
+            nanopayments_topup_threshold=nanopayments_topup_threshold,
+            nanopayments_topup_amount=nanopayments_topup_amount,
+            nanopayments_micro_threshold=nanopayments_micro_threshold,
+            nanopayments_private_key=nanopayments_private_key,
+            payment_strict_settlement=payment_strict_settlement,
+            auto_reconcile_pending_settlements=auto_reconcile_pending_settlements,
+            storage_backend=storage_backend,
+            redis_url=redis_url,
         )
 
     def with_updates(self, **updates: Any) -> Config:
@@ -174,6 +262,17 @@ class Config:
             "whitelisted_recipients": self.whitelisted_recipients,
             "confirm_always": self.confirm_always,
             "confirm_threshold": self.confirm_threshold,
+            "nanopayments_enabled": self.nanopayments_enabled,
+            "nanopayments_environment": self.nanopayments_environment,
+            "nanopayments_auto_topup": self.nanopayments_auto_topup,
+            "nanopayments_topup_threshold": self.nanopayments_topup_threshold,
+            "nanopayments_topup_amount": self.nanopayments_topup_amount,
+            "nanopayments_micro_threshold": self.nanopayments_micro_threshold,
+            "nanopayments_private_key": self.nanopayments_private_key,
+            "payment_strict_settlement": self.payment_strict_settlement,
+            "auto_reconcile_pending_settlements": self.auto_reconcile_pending_settlements,
+            "storage_backend": self.storage_backend,
+            "redis_url": self.redis_url,
         }
         current.update(updates)
         return Config(**current)

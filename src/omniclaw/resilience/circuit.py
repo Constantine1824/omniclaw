@@ -8,10 +8,10 @@ from __future__ import annotations
 
 import time
 from enum import Enum
-from typing import TYPE_CHECKING, Any
-from omniclaw.events import event_emitter
+from typing import TYPE_CHECKING
 
 from omniclaw.core.logging import get_logger
+from omniclaw.events import event_emitter
 
 if TYPE_CHECKING:
     from omniclaw.storage.base import StorageBackend
@@ -82,9 +82,7 @@ class CircuitBreaker:
 
     async def _set_state(self, state: CircuitState) -> None:
         """Set circuit state."""
-        await self._storage.save(
-            "resilience", self._key_state, {"state": state.value}
-        )
+        await self._storage.save("resilience", self._key_state, {"state": state.value})
         self._logger.info(f"Circuit state changed to: {state.value}")
 
     async def is_available(self) -> bool:
@@ -124,14 +122,10 @@ class CircuitBreaker:
             return
 
         # Atomic increment via storage backend
-        val_str = await self._storage.atomic_add(
-            "resilience", self._key_failures, "1"
-        )
+        val_str = await self._storage.atomic_add("resilience", self._key_failures, "1")
         current_failures = int(float(val_str))
 
-        self._logger.warning(
-            f"Failure recorded. Count: {current_failures}/{self.threshold}"
-        )
+        self._logger.warning(f"Failure recorded. Count: {current_failures}/{self.threshold}")
 
         if current_failures >= self.threshold:
             await self.trip()
@@ -146,9 +140,7 @@ class CircuitBreaker:
         elif state == CircuitState.CLOSED:
             # Decrement failure count by 1 (gradual recovery rather than instant reset)
             # This prevents a single success from wiping out a burst of recent failures
-            val_str = await self._storage.atomic_add(
-                "resilience", self._key_failures, "-1"
-            )
+            val_str = await self._storage.atomic_add("resilience", self._key_failures, "-1")
             current = int(float(val_str))
             if current <= 0:
                 # Clean up when count reaches zero
@@ -158,12 +150,8 @@ class CircuitBreaker:
         """Trip the circuit to OPEN."""
         recovery_time = time.time() + self.recovery_timeout
         await self._set_state(CircuitState.OPEN)
-        await self._storage.save(
-            "resilience", self._key_recovery, {"ts": str(recovery_time)}
-        )
-        self._logger.critical(
-            f"Circuit TRIPPED. Blocking requests for {self.recovery_timeout}s."
-        )
+        await self._storage.save("resilience", self._key_recovery, {"ts": str(recovery_time)})
+        self._logger.critical(f"Circuit TRIPPED. Blocking requests for {self.recovery_timeout}s.")
         event_emitter.emit_background("circuit.opened", "system", severity="critical")
 
     async def close(self) -> None:
@@ -188,7 +176,10 @@ class CircuitBreaker:
         if exc_type is None:
             await self.record_success()
         else:
-            # All exceptions within the circuit context are treated as infrastructure failures.
-            # Business logic errors (e.g. validation) should be caught outside the circuit block.
-            await self.record_failure()
+            # Only count infrastructure errors as circuit breaker failures.
+            # Business logic errors (OmniClawError subclasses) should not trip the breaker.
+            from omniclaw.core.exceptions import OmniClawError
+
+            if not issubclass(exc_type, OmniClawError):
+                await self.record_failure()
             return False  # Propagate exception

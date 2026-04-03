@@ -10,8 +10,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from decimal import Decimal
-from omniclaw.events import event_emitter
 from typing import TYPE_CHECKING
+
+from omniclaw.events import event_emitter
 
 if TYPE_CHECKING:
     from omniclaw.storage.base import StorageBackend
@@ -60,18 +61,18 @@ class FundLockService:
             lock_token (str) if successful, None if failed
         """
         lock_key = f"lock:wallet:{wallet_id}"
-        
+
         for i in range(retry_count + 1):
             token = await self._storage.acquire_lock(lock_key, ttl)
             if token:
                 logger.debug(f"Acquired lock for wallet {wallet_id} (token: {token[:8]}...)")
                 event_emitter.emit_background("payment.fund_locked", wallet_id, {"token": token})
                 return token
-            
+
             if i < retry_count:
                 logger.debug(f"Wallet {wallet_id} locked, retrying in {retry_delay}s...")
                 await asyncio.sleep(retry_delay)
-        
+
         logger.warning(f"Failed to acquire lock for wallet {wallet_id} after {retry_count} retries")
         event_emitter.emit_background("system.lock_timeout", wallet_id, severity="error")
         return None
@@ -92,3 +93,13 @@ class FundLockService:
         if result:
             logger.debug(f"Released lock for wallet {wallet_id}")
         return result
+
+    async def refresh_with_key(self, wallet_id: str, lock_token: str, ttl: int = 30) -> bool:
+        """
+        Refresh an existing wallet lock lease.
+
+        Returns:
+            True if refreshed, False if token mismatch or lock already lost.
+        """
+        lock_key = f"lock:wallet:{wallet_id}"
+        return await self._storage.refresh_lock(lock_key, lock_token, ttl)

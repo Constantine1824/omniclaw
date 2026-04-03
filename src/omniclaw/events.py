@@ -1,37 +1,37 @@
-from typing import Any, Dict, Optional, Protocol
+from typing import Any, Protocol
+
 
 class BaseEventEmitter(Protocol):
     async def emit(
         self,
         event_type: str,
         wallet_id: str,
-        payload: Optional[Dict[str, Any]] = None,
-        correlation_id: Optional[str] = None,
+        payload: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
         severity: str = "info",
-        agent_id: Optional[str] = None,
-    ) -> str:
-        ...
+        agent_id: str | None = None,
+    ) -> str: ...
 
     def emit_background(
         self,
         event_type: str,
         wallet_id: str,
-        payload: Optional[Dict[str, Any]] = None,
-        correlation_id: Optional[str] = None,
+        payload: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
         severity: str = "info",
-        agent_id: Optional[str] = None,
-    ) -> None:
-        ...
+        agent_id: str | None = None,
+    ) -> None: ...
+
 
 class NullEventEmitter:
     async def emit(
         self,
         event_type: str,
         wallet_id: str,
-        payload: Optional[Dict[str, Any]] = None,
-        correlation_id: Optional[str] = None,
+        payload: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
         severity: str = "info",
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ) -> str:
         return ""
 
@@ -39,31 +39,35 @@ class NullEventEmitter:
         self,
         event_type: str,
         wallet_id: str,
-        payload: Optional[Dict[str, Any]] = None,
-        correlation_id: Optional[str] = None,
+        payload: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
         severity: str = "info",
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ) -> None:
         pass
 
+
 _emitter: BaseEventEmitter = NullEventEmitter()
+
 
 def set_emitter(emitter: BaseEventEmitter) -> None:
     global _emitter
     _emitter = emitter
 
+
 def get_emitter() -> BaseEventEmitter:
     return _emitter
+
 
 class ProxyEventEmitter:
     async def emit(
         self,
         event_type: str,
         wallet_id: str,
-        payload: Optional[Dict[str, Any]] = None,
-        correlation_id: Optional[str] = None,
+        payload: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
         severity: str = "info",
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ) -> str:
         return await get_emitter().emit(
             event_type, wallet_id, payload, correlation_id, severity, agent_id
@@ -73,13 +77,14 @@ class ProxyEventEmitter:
         self,
         event_type: str,
         wallet_id: str,
-        payload: Optional[Dict[str, Any]] = None,
-        correlation_id: Optional[str] = None,
+        payload: dict[str, Any] | None = None,
+        correlation_id: str | None = None,
         severity: str = "info",
-        agent_id: Optional[str] = None,
+        agent_id: str | None = None,
     ) -> None:
         get_emitter().emit_background(
             event_type, wallet_id, payload, correlation_id, severity, agent_id
         )
+
 
 event_emitter = ProxyEventEmitter()

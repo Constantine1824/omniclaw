@@ -1,0 +1,22 @@
+{
+  "version": "2.0",
+  "tokens": {
+    "test-agent-token": {
+      "wallet_alias": "default",
+      "active": true,
+      "label": "Test Agent"
+    }
+  },
+  "wallets": {
+    "default": {
+      "name": "Test Wallet",
+      "limits": {
+        "daily_max": "100.00",
+        "per_tx_max": "10.00"
+      },
+      "recipients": {
+        "mode": "allow_all"
+      }
+    }
+  }
+}

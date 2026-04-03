@@ -158,7 +158,6 @@ class TestWalletSetInfo:
         """Test parsing wallet set from API response."""
         data = {
             "id": "0189bc61-7fe4-70f3-8a1b-0d14426397cb",
-            "name": "My Agent Wallet Set",
             "custodyType": "DEVELOPER",
             "updateDate": "2023-08-03T17:10:51Z",
             "createDate": "2023-08-03T17:10:51Z",
@@ -167,7 +166,6 @@ class TestWalletSetInfo:
         ws = WalletSetInfo.from_api_response(data)
 
         assert ws.id == "0189bc61-7fe4-70f3-8a1b-0d14426397cb"
-        assert ws.name == "My Agent Wallet Set"
         assert ws.custody_type == CustodyType.DEVELOPER
         assert isinstance(ws.create_date, datetime)
 

@@ -19,6 +19,13 @@ Usage:
     ... )
 """
 
+import warnings
+
+# Suppress noisy deprecation warnings from downstream dependencies (e.g. web3, circle-sdk)
+# We do this at the very top of the package to ensure it catches warnings during imports.
+warnings.filterwarnings("ignore", message=".*pkg_resources is deprecated.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pkg_resources")
+
 from omniclaw.client import OmniClaw
 from omniclaw.core.config import Config
 from omniclaw.core.exceptions import (
@@ -65,6 +72,15 @@ from omniclaw.guards import (
     RecipientGuard,
     SingleTxGuard,
 )
+
+# ERC-8004 Trust Layer
+from omniclaw.identity.types import (
+    AgentIdentity,
+    ReputationScore,
+    TrustCheckResult,
+    TrustPolicy,
+    TrustVerdict,
+)
 from omniclaw.onboarding import (
     doctor,
     ensure_setup,
@@ -78,17 +94,57 @@ from omniclaw.onboarding import (
     verify_setup,
 )
 
-# ERC-8004 Trust Layer
-from omniclaw.identity.types import (
-    AgentIdentity,
-    ReputationScore,
-    TrustCheckResult,
-    TrustPolicy,
-    TrustVerdict,
+# Nanopayments (EIP-3009 Circle Gateway)
+from omniclaw.protocols.nanopayments import (
+    # Exceptions
+    AuthorizationExpiredError,
+    AuthorizationNotYetValidError,
+    DepositError,
+    # Types
+    DepositResult,
+    DuplicateKeyAliasError,
+    ERC20ApprovalError,
+    GatewayAPIError,
+    GatewayBalance,
+    # Middleware
+    GatewayMiddleware,
+    # Wallet
+    GatewayWalletManager,
+    InvalidPriceError,
+    InvalidPrivateKeyError,
+    InvalidSignatureError,
+    KeyNotFoundError,
+    MiddlewareError,
+    # Adapter
+    NanopaymentAdapter,
+    # Client
+    NanopaymentClient,
+    NanopaymentError,
+    NanopaymentHTTPClient,
+    NanopaymentNotInitializedError,
+    NanopaymentProtocolAdapter,
+    NanopaymentResult,
+    NoDefaultKeyError,
+    NonceReusedError,
+    PaymentPayload,
+    PaymentRequiredError,
+    PaymentRequiredHTTPError,
+    PaymentRequirements,
+    SettlementError,
+    SignatureVerificationError,
+    SigningError,
+    SupportedKind,
+    UnsupportedNetworkError,
+    UnsupportedSchemeError,
+    VerificationError,
+    VerifyResponse,
+    WithdrawError,
+    WithdrawResult,
+    parse_price,
 )
 from omniclaw.trust.gate import TrustGate
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 __all__ = [
     # Main Client
     "OmniClaw",
@@ -130,6 +186,10 @@ __all__ = [
     "InsufficientBalanceError",
     "NetworkError",
     "X402Error",
+    "CrosschainError",
+    "IdempotencyError",
+    "TransactionTimeoutError",
+    "ValidationError",
     # Guards
     "Guard",
     "GuardChain",
@@ -147,4 +207,51 @@ __all__ = [
     "TrustCheckResult",
     "AgentIdentity",
     "ReputationScore",
+    # Nanopayments (EIP-3009 Circle Gateway)
+    # Client
+    "NanopaymentClient",
+    "NanopaymentHTTPClient",
+    # Adapter
+    "NanopaymentAdapter",
+    "NanopaymentProtocolAdapter",
+    # Wallet
+    "GatewayWalletManager",
+    # Middleware
+    "GatewayMiddleware",
+    "PaymentRequiredHTTPError",
+    "parse_price",
+    # Types
+    "DepositResult",
+    "GatewayBalance",
+    "NanopaymentResult",
+    "PaymentPayload",
+    "PaymentRequirements",
+    "SupportedKind",
+    "VerifyResponse",
+    "WithdrawResult",
+    # Exceptions
+    "NanopaymentError",
+    "NanopaymentNotInitializedError",
+    "AuthorizationExpiredError",
+    "AuthorizationNotYetValidError",
+    "DepositError",
+    "DuplicateKeyAliasError",
+    "ERC20ApprovalError",
+    "GatewayAPIError",
+    "InsufficientBalanceError",
+    "InvalidPriceError",
+    "InvalidPrivateKeyError",
+    "InvalidSignatureError",
+    "KeyNotFoundError",
+    "MiddlewareError",
+    "NoDefaultKeyError",
+    "NonceReusedError",
+    "PaymentRequiredError",
+    "SettlementError",
+    "SignatureVerificationError",
+    "SigningError",
+    "UnsupportedNetworkError",
+    "UnsupportedSchemeError",
+    "VerificationError",
+    "WithdrawError",
 ]

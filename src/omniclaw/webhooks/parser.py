@@ -3,14 +3,17 @@ Webhook Parser Infrastructure.
 """
 
 import base64
-import contextlib
 import json
+import os
+import sqlite3
 from collections.abc import Mapping
+from contextlib import closing
 from datetime import datetime
 from typing import Any
 
 from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 from omniclaw.core.events import NotificationType, WebhookEvent
@@ -19,6 +22,12 @@ from omniclaw.core.exceptions import ValidationError
 
 class InvalidSignatureError(ValidationError):
     """Raised when webhook signature verification fails."""
+
+    pass
+
+
+class DuplicateWebhookError(ValidationError):
+    """Raised when a webhook notificationId has already been processed."""
 
     pass
 
@@ -39,6 +48,68 @@ class WebhookParser:
             verification_key: Optional public key for signature verification.
         """
         self.verification_key = verification_key
+        # Circle production retries can span hours. Keep future skew tight, but allow older
+        # signed payloads to arrive inside an operational retry window.
+        self._max_replay_age_seconds = int(
+            os.environ.get("OMNICLAW_WEBHOOK_MAX_REPLAY_AGE_SECONDS", "43200")
+        )
+        self._max_future_skew_seconds = int(
+            os.environ.get("OMNICLAW_WEBHOOK_MAX_FUTURE_SKEW_SECONDS", "300")
+        )
+        self._dedup_db_path = os.environ.get("OMNICLAW_WEBHOOK_DEDUP_DB_PATH")
+        self._dedup_enabled = (
+            os.environ.get("OMNICLAW_WEBHOOK_DEDUP_ENABLED", "true").lower() == "true"
+        )
+        self._init_dedup_store()
+
+    def _init_dedup_store(self) -> None:
+        if not self._dedup_enabled or not self._dedup_db_path:
+            return
+        directory = os.path.dirname(self._dedup_db_path)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        with closing(sqlite3.connect(self._dedup_db_path)) as conn:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS processed_webhooks (
+                    notification_id TEXT PRIMARY KEY,
+                    processed_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+
+    def _mark_notification_processed(self, notification_id: str) -> bool:
+        """
+        Persist notificationId for idempotent consumption.
+
+        Returns:
+            True if notification_id was newly recorded, False if duplicate.
+        """
+        if not self._dedup_enabled:
+            return True
+        if not self._dedup_db_path:
+            # No persistent store configured; treat as non-duplicate.
+            return True
+
+        now_iso = datetime.utcnow().isoformat()
+        with closing(sqlite3.connect(self._dedup_db_path)) as conn:
+            cursor = conn.execute(
+                """
+                INSERT OR IGNORE INTO processed_webhooks(notification_id, processed_at)
+                VALUES (?, ?)
+                """,
+                (notification_id, now_iso),
+            )
+            conn.commit()
+            return cursor.rowcount == 1
+
+    @staticmethod
+    def _header_value(headers: Mapping[str, str], name: str) -> str | None:
+        for key, value in headers.items():
+            if key.lower() == name.lower():
+                return value
+        return None
 
     def verify_signature(self, payload: str | bytes, headers: Mapping[str, str]) -> bool:
         """
@@ -54,7 +125,9 @@ class WebhookParser:
         if not self.verification_key:
             return True
 
-        signature = headers.get("x-circle-signature")
+        signature = self._header_value(headers, "x-circle-signature")
+        if not signature:
+            signature = self._header_value(headers, "circle-signature")
         if not signature:
             raise InvalidSignatureError("Missing x-circle-signature header")
 
@@ -92,7 +165,12 @@ class WebhookParser:
             if not public_key:
                 try:
                     key_bytes = base64.b64decode(self.verification_key)
-                    public_key = Ed25519PublicKey.from_public_bytes(key_bytes)
+                    # Circle currently returns DER-encoded ECDSA public keys for CPN webhooks.
+                    # Legacy paths may still use raw Ed25519 public bytes.
+                    try:
+                        public_key = serialization.load_der_public_key(key_bytes)
+                    except Exception:
+                        public_key = Ed25519PublicKey.from_public_bytes(key_bytes)
                 except Exception:
                     pass
 
@@ -101,12 +179,15 @@ class WebhookParser:
                     "Could not parse verification key (expected PEM, Hex, or Base64)"
                 )
 
-            # Verify
-            if not isinstance(public_key, Ed25519PublicKey):
-                # Circle uses Ed25519, ensures we loaded the right type if PEM had something else
-                raise InvalidSignatureError("Key is not an Ed25519PublicKey")
-
-            public_key.verify(signature_bytes, payload_bytes)
+            # Verify based on key type
+            if isinstance(public_key, Ed25519PublicKey):
+                public_key.verify(signature_bytes, payload_bytes)
+            elif isinstance(public_key, ec.EllipticCurvePublicKey):
+                public_key.verify(signature_bytes, payload_bytes, ec.ECDSA(hashes.SHA256()))
+            else:
+                raise InvalidSignatureError(
+                    f"Unsupported public key type: {type(public_key).__name__}"
+                )
             return True
 
         except InvalidSignature:
@@ -155,19 +236,37 @@ class WebhookParser:
 
         # Calculate chronological timestamp before Event Mapping to enforce Replay Window
         # Extract Timestamp from Circle's createDate field. Missing creates validation error.
-        if "createDate" not in data:
-            raise ValidationError("Missing 'createDate' in payload for replay protection")
-            
-        try:
-            timestamp_raw = datetime.fromisoformat(data["createDate"].replace('Z', '+00:00'))
-            timestamp = timestamp_raw.replace(tzinfo=None) if timestamp_raw.tzinfo else timestamp_raw
-        except Exception as e:
-            raise ValidationError(f"Invalid 'createDate' format: {e}") from e
+        timestamp: datetime
+        timestamp_header = self._header_value(headers, "x-circle-timestamp")
+        if timestamp_header:
+            try:
+                timestamp = datetime.utcfromtimestamp(int(timestamp_header))
+            except Exception as e:
+                raise ValidationError(f"Invalid x-circle-timestamp header: {e}") from e
+        else:
+            if "createDate" not in data:
+                raise ValidationError("Missing 'createDate' in payload for replay protection")
+            try:
+                timestamp_raw = datetime.fromisoformat(data["createDate"].replace("Z", "+00:00"))
+                timestamp = (
+                    timestamp_raw.replace(tzinfo=None) if timestamp_raw.tzinfo else timestamp_raw
+                )
+            except Exception as e:
+                raise ValidationError(f"Invalid 'createDate' format: {e}") from e
 
-        # 2. Defend Against Replay Attacks (Max 5 Minute Drift allowed)
-        drift = abs((datetime.utcnow() - timestamp).total_seconds())
-        if drift > 300: # 5 Minutes
-            raise InvalidSignatureError(f"Webhook payload exceeds replay attack temporal drift window ({drift:.1f}s > 300s)")
+        # 2. Defend Against Replay Attacks.
+        # Accept delayed deliveries within retry window, but reject far-future timestamps.
+        age_seconds = (datetime.utcnow() - timestamp).total_seconds()
+        if age_seconds < -self._max_future_skew_seconds:
+            raise InvalidSignatureError(
+                "Webhook payload timestamp is too far in the future "
+                f"({-age_seconds:.1f}s > {self._max_future_skew_seconds}s)"
+            )
+        if age_seconds > self._max_replay_age_seconds:
+            raise InvalidSignatureError(
+                "Webhook payload exceeds replay age window "
+                f"({age_seconds:.1f}s > {self._max_replay_age_seconds}s)"
+            )
 
         # 2. Map Event
         if "notificationType" not in data:
@@ -191,10 +290,15 @@ class WebhookParser:
         except ValueError:
             event_type = NotificationType.UNKNOWN
 
-        # (Extracted earlier for replay defense)
+        notification_id = str(data.get("notificationId", "")).strip()
+        if not notification_id:
+            raise ValidationError("Missing 'notificationId' in payload")
+
+        if not self._mark_notification_processed(notification_id):
+            raise DuplicateWebhookError(f"Duplicate webhook notificationId: {notification_id}")
 
         return WebhookEvent(
-            id=data.get("notificationId", "unknown"),
+            id=notification_id,
             type=event_type,
             timestamp=timestamp,
             data=data.get("notification", {}),

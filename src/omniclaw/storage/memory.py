@@ -146,17 +146,17 @@ class InMemoryStorage(StorageBackend):
 
         # Get current value
         current_val = coll.get(key)
-        
+
         # Parse current value
         try:
             current_dec = Decimal(str(current_val)) if current_val is not None else Decimal("0")
         except Exception:
-             # If it's a dict or invalid, start from 0
+            # If it's a dict or invalid, start from 0
             current_dec = Decimal("0")
 
         delta = Decimal(amount)
         new_val = current_dec + delta
-        
+
         # Store as string to match Redis behavior
         coll[key] = str(new_val)
         return str(new_val)
@@ -169,21 +169,21 @@ class InMemoryStorage(StorageBackend):
         """Acquire lock with ownership token (in-memory implementation)."""
         import time
         import uuid
-        
+
         # Use a hidden collection for locks
         if "_locks" not in self._data:
             self._data["_locks"] = {}
         locks = self._data["_locks"]
-        
+
         now = time.time()
-        
+
         # Check if lock exists and is valid
         if key in locks:
             lock_info = locks[key]
             # If expiry is in future, it's locked
             if now < lock_info["expiry"]:
-                return None 
-            
+                return None
+
         # Set lock (acquire) with unique token
         token = str(uuid.uuid4())
         locks[key] = {"token": token, "expiry": now + ttl}
@@ -197,7 +197,7 @@ class InMemoryStorage(StorageBackend):
         """Release lock only if token matches."""
         if "_locks" not in self._data:
             return False
-            
+
         locks = self._data["_locks"]
         if key in locks:
             lock_info = locks[key]
@@ -207,6 +207,29 @@ class InMemoryStorage(StorageBackend):
             del locks[key]
             return True
         return False
+
+    async def refresh_lock(
+        self,
+        key: str,
+        token: str,
+        ttl: int = 30,
+    ) -> bool:
+        """Refresh lock TTL if token matches current owner."""
+        import time
+
+        if "_locks" not in self._data:
+            return False
+
+        locks = self._data["_locks"]
+        lock_info = locks.get(key)
+        if not lock_info:
+            return False
+
+        if lock_info.get("token") != token:
+            return False
+
+        lock_info["expiry"] = time.time() + ttl
+        return True
 
     async def health_check(self) -> bool:
         """Always healthy for in-memory."""

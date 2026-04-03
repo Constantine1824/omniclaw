@@ -14,11 +14,18 @@ Usage:
 
 from __future__ import annotations
 
+import warnings
+
+# Suppress deprecation warnings from downstream dependencies (e.g. web3 using pkg_resources)
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pkg_resources")
+warnings.filterwarnings("ignore", message=".*pkg_resources is deprecated.*")
+
+import contextlib
+import hashlib
 import json
 import logging
 import os
 import secrets
-import hashlib
 import stat
 import sys
 from pathlib import Path
@@ -27,17 +34,25 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from logging import Logger
 
-# Circle SDK utilities for entity secret management
-try:
-    from circle.web3 import utils as circle_utils
+# Circle SDK availability check (fully deferred to avoid circular import)
+CIRCLE_SDK_AVAILABLE: bool | None = None
 
-    CIRCLE_SDK_AVAILABLE = True
-except ImportError:
-    CIRCLE_SDK_AVAILABLE = False
-    circle_utils = None
+
+def _check_circle_sdk() -> bool:
+    """Lazily check if Circle SDK is installed."""
+    global CIRCLE_SDK_AVAILABLE
+    if CIRCLE_SDK_AVAILABLE is None:
+        try:
+            import importlib.util
+
+            CIRCLE_SDK_AVAILABLE = importlib.util.find_spec("circle.web3") is not None
+        except Exception:
+            CIRCLE_SDK_AVAILABLE = False
+    return CIRCLE_SDK_AVAILABLE
 
 
 MANAGED_CREDENTIALS_FILE = "credentials.json"
+KEYRING_SERVICE = "omniclaw.managed_credentials"
 
 
 def _api_key_fingerprint(api_key: str) -> str:
@@ -57,6 +72,30 @@ def _mask_secret(secret: str | None) -> str | None:
 def _managed_credentials_path() -> Path:
     """Return the path to the managed credentials metadata file."""
     return get_config_dir() / MANAGED_CREDENTIALS_FILE
+
+
+def _store_secret_in_keyring(secret_ref: str, secret_value: str) -> bool:
+    """Store a secret in OS keyring if available."""
+    try:
+        import keyring  # type: ignore
+
+        keyring.set_password(KEYRING_SERVICE, secret_ref, secret_value)
+        return True
+    except Exception:
+        return False
+
+
+def _load_secret_from_keyring(secret_ref: str | None) -> str | None:
+    """Load a secret from OS keyring if available."""
+    if not secret_ref:
+        return None
+    try:
+        import keyring  # type: ignore
+
+        value = keyring.get_password(KEYRING_SERVICE, secret_ref)
+        return value if isinstance(value, str) and value else None
+    except Exception:
+        return None
 
 
 def _read_managed_credentials_store() -> dict[str, Any]:
@@ -104,15 +143,34 @@ def store_managed_credentials(
     """
     store = _read_managed_credentials_store()
     fingerprint = _api_key_fingerprint(api_key)
-    recovery_path = recovery_file or (
-        str(find_recovery_file()) if find_recovery_file() else None
+    secret_ref = f"{fingerprint}:entity_secret"
+    stored_in_keyring = _store_secret_in_keyring(secret_ref, entity_secret)
+    runtime_env = os.environ.get("OMNICLAW_ENV", "development").lower()
+    default_plaintext_fallback = (
+        "false" if runtime_env in {"prod", "production", "mainnet"} else "true"
+    )
+    allow_plaintext_fallback = (
+        os.environ.get(
+            "OMNICLAW_ALLOW_PLAINTEXT_MANAGED_SECRET",
+            default_plaintext_fallback,
+        ).lower()
+        == "true"
+    )
+    recovery_path = recovery_file or (str(find_recovery_file()) if find_recovery_file() else None)
+
+    stored_entity_secret = (
+        entity_secret if (not stored_in_keyring and allow_plaintext_fallback) else None
     )
 
     store["credentials"][fingerprint] = {
         "api_key_fingerprint": fingerprint,
         "api_key_masked": _mask_secret(api_key),
-        "entity_secret": entity_secret,
+        "entity_secret": stored_entity_secret,
         "entity_secret_masked": _mask_secret(entity_secret),
+        "entity_secret_ref": secret_ref if stored_in_keyring else None,
+        "entity_secret_storage": "keyring"
+        if stored_in_keyring
+        else ("plaintext" if stored_entity_secret else "unavailable"),
         "source": source,
         "recovery_file": recovery_path,
     }
@@ -132,8 +190,32 @@ def load_managed_entity_secret(api_key: str) -> str | None:
     entry = load_managed_credentials(api_key)
     if not entry:
         return None
+    secret = _load_secret_from_keyring(entry.get("entity_secret_ref"))
+    if secret:
+        return secret
     secret = entry.get("entity_secret")
     return secret if isinstance(secret, str) and secret else None
+
+
+def resolve_entity_secret(api_key: str | None = None) -> str | None:
+    """
+    Find the best available entity secret for the current session.
+
+    Resolution order:
+    1. OS environment (ENTITY_SECRET)
+    2. Managed store (matching CIRCLE_API_KEY)
+    """
+    # 1. Environment priority
+    env_secret = os.getenv("ENTITY_SECRET")
+    if env_secret:
+        return env_secret
+
+    # 2. Managed store fallback
+    resolved_api_key = api_key or os.getenv("CIRCLE_API_KEY")
+    if resolved_api_key:
+        return load_managed_entity_secret(resolved_api_key)
+
+    return None
 
 
 def get_config_dir() -> Path:
@@ -219,7 +301,7 @@ def register_entity_secret(
     Raises:
         SetupError: If Circle SDK not installed or registration fails
     """
-    if not CIRCLE_SDK_AVAILABLE:
+    if not _check_circle_sdk():
         raise SetupError(
             "Circle SDK not installed. Run: pip install circle-developer-controlled-wallets"
         )
@@ -244,6 +326,8 @@ def register_entity_secret(
     existing_files = set(recovery_dir.glob("recovery_file_*.dat"))
 
     try:
+        from circle.web3 import utils as circle_utils
+
         result = circle_utils.register_entity_secret_ciphertext(
             api_key=api_key,
             entity_secret=entity_secret,
@@ -377,10 +461,9 @@ OMNICLAW_NETWORK={network}
 """
 
     env_path.write_text(env_content)
-    try:
+    os.chmod(env_path, 0o600)
+    with contextlib.suppress(OSError):
         store_managed_credentials(api_key, entity_secret, source="create_env_file")
-    except OSError:
-        pass
     return env_path
 
 
@@ -437,6 +520,7 @@ OMNICLAW_NETWORK={network}
 """
 
     env_path.write_text(env_content)
+    os.chmod(env_path, 0o600)
     recovery_file = find_recovery_file()
     try:
         store_managed_credentials(
@@ -511,6 +595,8 @@ def auto_setup_entity_secret(
     if env_file.exists():
         with open(env_file, "a") as f:
             f.write(f"\n# Auto-generated by OmniClaw\nENTITY_SECRET={entity_secret}\n")
+        with contextlib.suppress(OSError):
+            os.chmod(env_file, 0o600)
         log.info(f"Entity secret appended to {env_file.resolve()}")
 
     recovery_file = find_recovery_file()
@@ -535,7 +621,7 @@ def verify_setup() -> dict[str, bool]:
         Dict with status of each requirement and 'ready' boolean
     """
     results = {
-        "circle_sdk_installed": CIRCLE_SDK_AVAILABLE,
+        "circle_sdk_installed": _check_circle_sdk(),
         "api_key_set": bool(os.getenv("CIRCLE_API_KEY")),
         "entity_secret_set": bool(os.getenv("ENTITY_SECRET")),
     }
@@ -554,8 +640,10 @@ def doctor(
     """
     resolved_api_key = api_key or os.getenv("CIRCLE_API_KEY")
     env_entity_secret = entity_secret or os.getenv("ENTITY_SECRET")
-    managed_entry = load_managed_credentials(resolved_api_key) if resolved_api_key else None
-    managed_secret = managed_entry.get("entity_secret") if managed_entry else None
+    managed_secret = None
+    if resolved_api_key:
+        load_managed_credentials(resolved_api_key)
+        managed_secret = load_managed_entity_secret(resolved_api_key)
     recovery_file = find_recovery_file()
     config_dir = get_config_dir()
     credentials_path = _managed_credentials_path()
@@ -572,9 +660,7 @@ def doctor(
     if resolved_api_key and not active_secret:
         warnings.append("No active ENTITY_SECRET found for the current API key.")
     if active_secret and not recovery_file:
-        warnings.append(
-            "No Circle recovery file found in the OmniClaw config directory."
-        )
+        warnings.append("No Circle recovery file found in the OmniClaw config directory.")
     if recovery_file:
         mode = stat.S_IMODE(recovery_file.stat().st_mode)
         if mode & 0o077:
@@ -582,13 +668,11 @@ def doctor(
                 f"Recovery file permissions are too broad ({oct(mode)}). Expected 0o600."
             )
     if env_entity_secret and managed_secret and env_entity_secret != managed_secret:
-        warnings.append(
-            "Environment ENTITY_SECRET does not match the managed config copy."
-        )
+        warnings.append("Environment ENTITY_SECRET does not match the managed config copy.")
 
     return {
-        "ready": bool(resolved_api_key and active_secret and CIRCLE_SDK_AVAILABLE),
-        "circle_sdk_installed": CIRCLE_SDK_AVAILABLE,
+        "ready": bool(resolved_api_key and active_secret and _check_circle_sdk()),
+        "circle_sdk_installed": _check_circle_sdk(),
         "config_dir": str(config_dir),
         "managed_credentials_path": str(credentials_path),
         "api_key_set": bool(resolved_api_key),
@@ -600,6 +684,7 @@ def doctor(
         "recovery_file_found": bool(recovery_file),
         "recovery_file_path": str(recovery_file) if recovery_file else None,
         "warnings": warnings,
+        "can_sync_to_env": bool(managed_secret and not env_entity_secret),
     }
 
 
@@ -663,6 +748,9 @@ def print_doctor_status(
         print("Next steps:")
         for step in next_steps:
             print(f"  - {step}")
+        if status.get("can_sync_to_env"):
+            print("\n  ð¡ TIP: You have a saved Entity Secret but it's not in your environment.")
+            print("     Run: omniclaw setup  # to sync it automatically")
         print()
 
     print("Ready to use." if status["ready"] else "Setup needs attention.")

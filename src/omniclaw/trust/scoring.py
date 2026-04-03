@@ -15,8 +15,7 @@ Algorithm:
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
-from typing import Any
+from datetime import datetime, timezone
 
 from omniclaw.core.logging import get_logger
 from omniclaw.identity.types import FeedbackSignal, ReputationScore
@@ -31,8 +30,8 @@ MIN_SAMPLE_SIZE = 3
 
 # Recency bands based on feedback_index position
 # top 33% of signals = recent, middle 33% = aging, bottom 33% = old
-RECENT_BAND = 0.67   # top third starts at 67% of max index
-AGING_BAND = 0.33    # middle third starts at 33%
+RECENT_BAND = 0.67  # top third starts at 67% of max index
+AGING_BAND = 0.33  # middle third starts at 33%
 
 
 class ReputationAggregator:
@@ -204,4 +203,3 @@ class ReputationAggregator:
 
 
 __all__ = ["ReputationAggregator"]
-
