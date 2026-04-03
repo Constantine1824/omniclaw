@@ -2,7 +2,7 @@
 
 **Economic Execution and Control Layer for Agentic Systems** — Policy-controlled payments with Circle Gateway nanopayments (EIP-3009), x402 protocol support, gasless transactions, and per-agent wallet isolation.
 
-📄 [Read the Whitepaper](https://www.omniclaw.ai/whitepaper) · 📦 [PyPI](https://pypi.org/project/omniclaw/) · 🧪 [Tests: 1220 passed](tests/)
+📦 [PyPI](https://pypi.org/project/omniclaw/) · 🧪 [Tests: 1220 passed](tests/)
 
 ---
 
