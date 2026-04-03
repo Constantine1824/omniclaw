@@ -688,6 +688,91 @@ def print_setup_status() -> None:
         print("Setup incomplete. Run: quick_setup('YOUR_API_KEY')")
 
 
+def backup_info() -> dict[str, Any]:
+    """
+    Collect location and status of all backup-critical files.
+
+    Returns a dict suitable for JSON serialisation or human-readable display.
+    """
+    config_dir = get_config_dir()
+    credentials_path = _managed_credentials_path()
+    recovery_file = find_recovery_file()
+    env_file = Path(".env").resolve()
+
+    warnings: list[str] = []
+
+    if not recovery_file:
+        warnings.append(
+            "No recovery file found. Run 'omniclaw setup' or back up from another machine."
+        )
+
+    if recovery_file:
+        mode = stat.S_IMODE(recovery_file.stat().st_mode)
+        if mode & 0o077:
+            warnings.append(
+                f"Recovery file permissions are {oct(mode)}. Expected 0o600."
+            )
+    else:
+        mode = None
+
+    if not credentials_path.exists():
+        warnings.append(
+            "No managed credentials found. Run 'omniclaw setup' or 'omniclaw import-secret'."
+        )
+
+    return {
+        "config_dir": str(config_dir),
+        "managed_credentials_path": str(credentials_path),
+        "managed_credentials_exists": credentials_path.exists(),
+        "recovery_file_path": str(recovery_file) if recovery_file else None,
+        "recovery_file_exists": bool(recovery_file),
+        "recovery_file_permissions": oct(mode) if mode is not None else None,
+        "env_file_path": str(env_file),
+        "env_file_exists": env_file.exists(),
+        "warnings": warnings,
+    }
+
+
+def print_backup_info(*, as_json: bool = False) -> None:
+    """Print backup file locations and status."""
+    info = backup_info()
+
+    if as_json:
+        print(json.dumps(info, indent=2, sort_keys=True))
+        return
+
+    def tag(ok: bool) -> str:
+        return "[FOUND]" if ok else "[MISSING]"
+
+    print("OmniClaw Backup Info")
+    print("-" * 30)
+    print(f"  Config directory:    {info['config_dir']}")
+    print(
+        f"  Managed credentials: {info['managed_credentials_path']}  "
+        f"{tag(info['managed_credentials_exists'])}"
+    )
+    print(
+        f"  Recovery file:       {info['recovery_file_path'] or 'not found'}  "
+        f"{tag(info['recovery_file_exists'])}"
+    )
+    print(
+        f"  .env file:           {info['env_file_path']}  "
+        f"{tag(info['env_file_exists'])}"
+    )
+    print()
+
+    if info["warnings"]:
+        print("Warnings:")
+        for warning in info["warnings"]:
+            print(f"  - {warning}")
+        print()
+
+    print("Recommended actions:")
+    print("  - Copy the recovery file to a secure off-machine location (e.g. password manager, encrypted USB).")
+    print("  - The recovery file is required to reset your entity secret via the Circle console if it is lost.")
+    print("  - Do NOT commit the recovery file or credentials.json to version control.")
+
+
 def run_setup_cli(
     api_key: str,
     network: str = "ARC-TESTNET",
@@ -734,6 +819,129 @@ def run_setup_cli(
         return 1
 
     return 0
+
+
+def run_export_env_cli(
+    api_key: str | None = None,
+    fmt: str = "shell",
+    output: str | None = None,
+    force: bool = False,
+) -> int:
+    """
+    CLI handler for ``omniclaw export-env``.
+
+    Resolves credentials from environment then managed store, and prints
+    them as shell export statements or dotenv format.
+
+    Returns a shell exit code (0 = success, 1 = error).
+    """
+    resolved_api_key = api_key or os.getenv("CIRCLE_API_KEY")
+    if not resolved_api_key:
+        print(
+            "Error: No Circle API key found.\n"
+            "Pass --api-key or set the CIRCLE_API_KEY environment variable.",
+            file=sys.stderr,
+        )
+        return 1
+
+    env_entity_secret = os.getenv("ENTITY_SECRET")
+    managed_secret = load_managed_entity_secret(resolved_api_key)
+    active_secret = env_entity_secret or managed_secret
+
+    if not active_secret:
+        print(
+            "Error: No entity secret found in environment or managed store.\n"
+            "Run 'omniclaw setup' or 'omniclaw import-secret' first.",
+            file=sys.stderr,
+        )
+        return 1
+
+    network = os.getenv("OMNICLAW_NETWORK", "ARC-TESTNET")
+
+    if fmt == "shell":
+        lines = (
+            f'export CIRCLE_API_KEY="{resolved_api_key}"\n'
+            f'export ENTITY_SECRET="{active_secret}"\n'
+            f'export OMNICLAW_NETWORK="{network}"\n'
+        )
+    else:
+        lines = (
+            f"CIRCLE_API_KEY={resolved_api_key}\n"
+            f"ENTITY_SECRET={active_secret}\n"
+            f"OMNICLAW_NETWORK={network}\n"
+        )
+
+    if output:
+        out_path = Path(output).resolve()
+        if out_path.exists() and not force:
+            print(
+                f"Error: {out_path} already exists. Use --force to overwrite.",
+                file=sys.stderr,
+            )
+            return 1
+        out_path.write_text(lines)
+        print(f"Credentials written to {out_path}")
+    else:
+        print("# Warning: secrets printed to stdout. Pipe carefully.", file=sys.stderr)
+        sys.stdout.write(lines)
+
+    return 0
+
+
+def run_import_secret_cli(
+    api_key: str,
+    entity_secret: str,
+    recovery_file: str | None = None,
+) -> int:
+    """
+    CLI handler for ``omniclaw import-secret``.
+
+    Validates and stores an existing entity secret into the managed config
+    store without calling the Circle API.
+
+    Returns a shell exit code (0 = success, 1 = validation error).
+    """
+    if len(entity_secret) != 64:
+        print(
+            f"Error: Entity secret must be 64 hex characters, got {len(entity_secret)}.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        int(entity_secret, 16)
+    except ValueError:
+        print("Error: Entity secret must be valid hexadecimal.", file=sys.stderr)
+        return 1
+
+    recovery_path: str | None = None
+    if recovery_file:
+        p = Path(recovery_file).resolve()
+        if not p.exists():
+            print(f"Error: Recovery file not found: {p}", file=sys.stderr)
+            return 1
+        recovery_path = str(p)
+
+    try:
+        store_managed_credentials(
+            api_key,
+            entity_secret,
+            source="cli_import",
+            recovery_file=recovery_path,
+        )
+    except (OSError, SetupError) as exc:
+        print(f"Error: Failed to store credentials: {exc}", file=sys.stderr)
+        return 1
+
+    print("Entity secret imported successfully.")
+    print(f"  API key:        {_mask_secret(api_key)}")
+    print(f"  Entity secret:  {_mask_secret(entity_secret)}")
+    if recovery_path:
+        print(f"  Recovery file:  {recovery_path}")
+    print()
+    print("Run 'omniclaw doctor' to verify your setup.")
+    return 0
+
 
 # Backwards compatibility alias
 ensure_setup = quick_setup
