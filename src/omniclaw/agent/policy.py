@@ -609,17 +609,13 @@ class WalletManager:
             for token in alias_to_tokens.get(alias, []):
                 self._policy.set_mapping(token, wallet_id, wallet_map.get(alias, {}))
                 results[token] = wallet_id
-            self._logger.info(
-                f"Initialized wallet '{wallet_id}' for alias '{alias}'"
-            )
+            self._logger.info(f"Initialized wallet '{wallet_id}' for alias '{alias}'")
 
             # Apply policy guards to this wallet
             try:
                 await self._apply_policy_guards(wallet_id, wallet_map.get(alias, {}))
             except Exception as e:
-                self._logger.error(
-                    f"Failed to apply policy guards for wallet '{wallet_id}': {e}"
-                )
+                self._logger.error(f"Failed to apply policy guards for wallet '{wallet_id}': {e}")
 
         if changed:
             self._policy.save()

@@ -34,8 +34,10 @@ def configure(
 
     config = load_config()
     if interactive:
-        default_url = server_url or config.get("server_url") or os.environ.get(
-            "OMNICLAW_SERVER_URL", "http://localhost:8080"
+        default_url = (
+            server_url
+            or config.get("server_url")
+            or os.environ.get("OMNICLAW_SERVER_URL", "http://localhost:8080")
         )
         server_url = typer.prompt("Server URL", default=default_url)
         default_wallet = wallet or config.get("wallet") or "primary"
@@ -46,10 +48,7 @@ def configure(
         else:
             token = typer.prompt("Agent token", hide_input=True)
         owner_default = (
-            owner_token
-            or config.get("owner_token")
-            or os.environ.get("OMNICLAW_OWNER_TOKEN")
-            or ""
+            owner_token or config.get("owner_token") or os.environ.get("OMNICLAW_OWNER_TOKEN") or ""
         )
         owner_token = typer.prompt("Owner token (optional)", default=owner_default, hide_input=True)
 
