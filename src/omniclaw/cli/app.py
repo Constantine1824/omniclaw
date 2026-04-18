@@ -9,6 +9,7 @@ from .commands import configure as configure_cmd
 from .commands import confirmations as confirmations_cmd
 from .commands import intents as intents_cmd
 from .commands import ledger as ledger_cmd
+from .commands import onboarding as onboarding_cmd
 from .commands import payments as payments_cmd
 from .commands import serve as serve_cmd
 from .commands import status as status_cmd
@@ -58,6 +59,7 @@ confirmations_app = typer.Typer(help="Manage pending confirmations (owner only)"
 status_app = None
 
 configure_cmd.register(app)
+onboarding_cmd.register(app)
 wallet_cmd.register(app, wallet_app)
 payments_cmd.register(app)
 intents_cmd.register(app, intents_app)
