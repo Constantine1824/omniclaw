@@ -7,7 +7,9 @@ import typer
 
 def doctor_cmd(
     api_key: str | None = typer.Option(None, "--api-key", help="Override CIRCLE_API_KEY"),
-    entity_secret: str | None = typer.Option(None, "--entity-secret", help="Override ENTITY_SECRET"),
+    entity_secret: str | None = typer.Option(
+        None, "--entity-secret", help="Override ENTITY_SECRET"
+    ),
     as_json: bool = typer.Option(False, "--json", help="Output machine-readable JSON"),
 ) -> None:
     """Inspect OmniClaw setup, managed credentials, and recovery state."""
