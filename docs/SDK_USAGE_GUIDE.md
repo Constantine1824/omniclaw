@@ -46,6 +46,8 @@ Run the built-in diagnostic command to check the full state:
 omniclaw doctor
 ```
 
+For the full list of CLI commands (setup, backup-info, export-env, import-secret, server, and more), see the [CLI Reference](CLI_REFERENCE.md).
+
 ## Testing with Real Funds
 
 To test payments with real USDC on testnet:
